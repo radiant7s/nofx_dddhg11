@@ -19,7 +19,6 @@ type Data struct {
 	CurrentEMA20      float64
 	CurrentMACD       float64
 	CurrentRSI7       float64
-	CurrentRSI7_15m   float64 // 15分钟RSI7 
 	CurrentEMA20_15m  float64 // 15分钟EMA20
 	CurrentEMA20_1h   float64 // 1小时EMA20
 	CurrentEMA50_1h   float64 // 1小时EMA50
@@ -77,24 +76,23 @@ func Get(symbol string) (*Data, error) {
 	if err != nil {
 		return nil, fmt.Errorf("获取3分钟K线失败: %v", err)
 	}
-		// 新增：获取15分钟K线
+
+	// 获取4小时K线数据 (最近10个)
+	klines4h, err := getKlines(symbol, "4h", 60) // 多获取用于计算指标
+	if err != nil {
+		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
+	}
+	// 新增：获取15分钟K线
 	klines15m, err := getKlines(symbol, "15m", 40) // 多获取用于计算
 	if err != nil {
 		return nil, fmt.Errorf("获取15分钟K线失败: %v", err)
 	}
 
 	// 新增：获取1小时K线
-	klines1h, err := getKlines(symbol, "1h", 100) // 多获取用于计算
+	klines1h, err := getKlines(symbol, "1h", 60) // 多获取用于计算
 	if err != nil {
 		return nil, fmt.Errorf("获取1小时K线失败: %v", err)
 	}
-
-	// 获取4小时K线数据 (最近10个)
-	klines4h, err := getKlines(symbol, "4h", 100) // 多获取用于计算指标
-	if err != nil {
-		return nil, fmt.Errorf("获取4小时K线失败: %v", err)
-	}
-
 
 	// 计算当前指标 (基于3分钟最新数据)
 	currentPrice := klines3m[len(klines3m)-1].Close
@@ -105,7 +103,6 @@ func Get(symbol string) (*Data, error) {
 	currentEMA20_15m := calculateEMA(klines15m, 20)
 	currentEMA20_1h := calculateEMA(klines1h, 20)
 	currentEMA50_1h := calculateEMA(klines1h, 50)
-	currentRSI7_15m := calculateRSI(klines15m, 7) 
 
 	// 计算价格变化百分比
 	// 1小时价格变化 = 20个3分钟K线前的价格
@@ -150,7 +147,6 @@ func Get(symbol string) (*Data, error) {
 		CurrentEMA20:      currentEMA20,
 		CurrentMACD:       currentMACD,
 		CurrentRSI7:       currentRSI7,
-		CurrentRSI7_15m:   currentRSI7_15m, // <-- 新增
 		CurrentEMA20_15m:  currentEMA20_15m, // <-- 新增
 		CurrentEMA20_1h:   currentEMA20_1h,  // <-- 新增
 		CurrentEMA50_1h:   currentEMA50_1h,  // <-- 新增
@@ -545,7 +541,7 @@ func Format(data *Data) string {
 	}
 
 	return sb.String()
-	}
+}
 
 // formatFloatSlice 格式化float64切片为字符串
 func formatFloatSlice(values []float64) string {

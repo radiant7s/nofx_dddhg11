@@ -223,7 +223,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("1. **风险回报比**: 必须 ≥ 1:4（冒1%风险，赚4%+收益）\n")
 	sb.WriteString("2. **最多持仓**: 3个币种（质量>数量）\n")
 	sb.WriteString(fmt.Sprintf("3. **单币仓位**: 山寨%.0f-%.0f U(%dx杠杆) | BTC/ETH %.0f-%.0f U(%dx杠杆)\n",
-		accountEquity*0.5, accountEquity*1.0, altcoinLeverage, accountEquity*1.0, accountEquity*2.0, btcEthLeverage))
+		accountEquity*0.8, accountEquity*1.5, altcoinLeverage, accountEquity*5, accountEquity*10, btcEthLeverage))
 	sb.WriteString("4. **保证金**: 总使用率 ≤ 90%\n\n")
 
 	// === 做空激励 ===
@@ -250,33 +250,20 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("- 📊 **原始序列**：3分钟价格序列(MidPrices数组) + 4小时K线序列\n")
 	sb.WriteString("- 📈 **技术序列**：EMA20序列、MACD序列、RSI7序列、RSI14序列\n")
 	sb.WriteString("- 💰 **资金序列**：成交量序列、持仓量(OI)序列、资金费率\n")
-	sb.WriteString("- 📈 **中观指标**: 15m_ema20, 1h_ema20, 1h_ema50\n")
+	sb.WriteString("- 📈 **中观指标**：15m_ema20, 1h_ema20, 1h_ema50\n")
+	sb.WriteString("- 🎯 **筛选标记**：AI500评分 / OI_Top排名（如果有标注）\n\n")
+	sb.WriteString("**分析方法**（完全由你自主决定）：\n")
+	sb.WriteString("- 自由运用序列数据，你可以做但不限于趋势分析、形态识别、支撑阻力、技术阻力位、斐波那契、波动带计算\n")
+	sb.WriteString("- 多维度交叉验证（价格+量+OI+指标+序列形态）\n")
+	sb.WriteString("- **新规则**：只顺着1小时趋势交易。做多时，价格应在 1h_ema20 上方。做空时，价格应在 1h_ema20 下方。\n")
+	sb.WriteString("- 用你认为最有效的方法发现高确定性机会\n")
 	sb.WriteString("- 综合信心度 ≥ 90 才开仓\n\n")
+	sb.WriteString("**避免低质量信号**：\n")
+	sb.WriteString("- 单一维度（只看一个指标）\n")
+	sb.WriteString("- 相互矛盾（涨但量萎缩）\n")
+	sb.WriteString("- 横盘震荡\n")
+	sb.WriteString("- 刚平仓不久（<15分钟）\n\n")
 
-	sb.WriteString("# 📋 最终开仓决策流程 (The Final Open-Position Checklist)\n\n")
-	sb.WriteString("你必须**严格按照以下顺序**检查这3条规则。只要有1条不满足，就**必须**决策 `wait`。\n\n")
-
-	sb.WriteString("   - 检查 **15m K线**的 `CurrentRSI7_15m` 指标。\n")
-     sb.WriteString("   - 如果 `CurrentRSI7_15m > 75` (极度超买)，**[严禁开多单]**。\n")
-     sb.WriteString("   - 如果 `CurrentRSI7_15m < 25` (极度超卖)，**[严禁开空单]**。\n")
-	sb.WriteString("   - 检查 3m K线的 `RSI7` 指标。\n")
-	sb.WriteString("   - 如果 `RSI7 > 75` (极度超买)，**[严禁开多单]**。\n")
-	sb.WriteString("   - 如果 `RSI7 < 25` (极度超卖)，**[严禁开空单]**。\n")
-	sb.WriteString("   - *如果此条触发，立即决策 `wait`，不要再看规则二。*\n\n")
-
-	sb.WriteString("2. **规则二：1小时趋势否决权 (第二道防线)**\n")
-	sb.WriteString("   - *如果规则一通过*，检查 1h K线的趋势。\n")
-	sb.WriteString("   - 如果 `价格 < 1h_ema20` (1小时下跌趋势)，**[严禁开多单]**。\n")
-	sb.WriteString("   - 如果 `价格 > 1h_ema20` (1小时上涨趋势)，**[严禁开空单]**。\n")
-	sb.WriteString("   - *此规则的优先级高于一切RSI“抄底”信号。*\n\n")
-
-	sb.WriteString("3. **规则三：信号强度与风报比 (最后一道防线)**\n")
-	sb.WriteString("   - *如果规则一和二都通过*（例如：价格在1h_ema20下方，且RSI不在超卖区，你想开空单）。\n")
-	sb.WriteString("   - 你必须同时满足 `信心度 ≥ 90` 并且 风报比 `≥ 1:4`。\n")
-	sb.WriteString("   - **如果全部满足，[允许开仓]**。\n\n")
-
-	// --- 粘贴到这里结束 ---
-	
 	// === 夏普比率自我进化 ===
 	sb.WriteString("# 🧬 夏普比率自我进化\n\n")
 	sb.WriteString("每次你会收到**夏普比率**作为绩效反馈（周期级别）：\n\n")
@@ -300,14 +287,14 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("1. **分析夏普比率**: 当前策略是否有效？需要调整吗？\n")
 	sb.WriteString("2. **评估持仓**: 趋势是否改变？是否该止盈/止损？\n")
 	// 动态插入总本金 (我们刚在问题一里解决的)
-    sb.WriteString(fmt.Sprintf("   - **最高指令**: 保护我们当前 %.2f USDT 的总本金是你的第一要务！\n", accountEquity))
-    // 解决“手续费”问题的新规则
-    sb.WriteString("   - **利润缓冲带 (新规则)**: 为了避免因手续费而亏损，你**不能**过早平仓。\n")
-    sb.WriteString("   - **规则A (显著利润)**: 只有当仓位**利润显著**（例如：已达到 1:4 目标的 50%，即盈亏比达到 1:2），或者保證金盈利率 > 30% 时，你才**有资格**考虑“主动止盈”。\n")
-    sb.WriteString("   - **规则B (执行平仓)**: 当你满足“规则A”后，如果此时 3m 或 15m K线图出现**明确的**反转信号（例如跌破15m_ema20），**你必须立即平仓 (`close_long`)**，保护已有的利润。\n")
+     sb.WriteString(fmt.Sprintf("   - **最高指令**: 保护我们当前 %.2f USDT 的总本金是你的第一要务！\n", accountEquity))
+     // 解决“手续费”问题的新规则
+     sb.WriteString("   - **利润缓冲带 (新规则)**: 为了避免因手续费而亏损，你**不能**过早平仓。\n")
+     sb.WriteString("   - **规则A (显著利润)**: 只有当仓位**利润显著**（例如：已达到 1:4 目标的 50%，即盈亏比达到 1:2），或者保證金盈利率 > 30% 时，你才**有资格**考虑“主动止盈”。\n")
+     sb.WriteString("   - **规则B (执行平仓)**: 当你满足“规则A”后，如果此时 3m 或 15m K线图出现**明确的**反转信号（例如跌破15m_ema20），**你必须立即平仓 (`close_long`)**，保护已有的利润。\n")
 
-	sb.WriteString("   - **严格止损**: 趋势是否触及你设定的`stop_loss`？如果是，立即平仓。\n")
-	sb.WriteString("   - **让利润奔跑?**: 如果趋势强劲且**没有**反转信号，继续持有 (`hold`) 到`take_profit`。\n")
+sb.WriteString("   - **严格止损**: 趋势是否触及你设定的`stop_loss`？如果是，立即平仓。\n")
+sb.WriteString("   - **让利润奔跑?**: 如果趋势强劲且**没有**反转信号，继续持有 (`hold`) 到`take_profit`。\n")
 	sb.WriteString("3. **寻找新机会**: 有强信号吗？多空机会？\n")
 	sb.WriteString("4. **输出决策**: 思维链分析 + JSON\n\n")
 
