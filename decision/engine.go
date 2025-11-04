@@ -221,7 +221,7 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	// === 硬约束（风险控制）===
 	sb.WriteString("# ⚖️ 硬约束（风险控制）\n\n")
 	sb.WriteString("1. **风险回报比**: 必须 ≥ 1:4（冒1%风险，赚4%+收益）\n")
-	sb.WriteString("2. **最多持仓**: 5个币种（质量>数量）\n")
+	sb.WriteString("2. **最多持仓**: 3个币种（质量>数量）\n")
 	sb.WriteString(fmt.Sprintf("3. **单币仓位**: 山寨%.0f-%.0f U(%dx杠杆) | BTC/ETH %.0f-%.0f U(%dx杠杆)\n",
 		accountEquity*0.5, accountEquity*1.0, altcoinLeverage, accountEquity*1.0, accountEquity*2.0, btcEthLeverage))
 	sb.WriteString("4. **保证金**: 总使用率 ≤ 90%\n\n")
