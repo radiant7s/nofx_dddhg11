@@ -50,7 +50,8 @@ func Get(symbol string) (*Data, error) {
 	// 计算当前指标 (基于3分钟最新数据)
 	currentPrice := klines3m[len(klines3m)-1].Close
 	currentEMA20 := calculateEMA(klines3m, 20)
-	currentMACD := calculateMACD(klines3m)
+	dif, _, _  := calculateMACD(klines3m, 12, 26, 9)
+	currentMACD := dif
 	currentRSI7 := calculateRSI(klines3m, 7)
 
 	// 计算价格变化百分比
@@ -146,19 +147,73 @@ func calculateEMA(klines []Kline, period int) float64 {
 
 	return ema
 }
+// calculateEMAOfDIF 计算DIF序列的EMA（即DEA信号线）
+func calculateEMAOfDIF(difSeries []float64, signalPeriod int) float64 {
+    if len(difSeries) < signalPeriod {
+        return 0
+    }
 
-// calculateMACD 计算MACD
-func calculateMACD(klines []Kline) float64 {
-	if len(klines) < 26 {
-		return 0
-	}
+    // 计算前signalPeriod个DIF值的SMA作为初始EMA
+    sum := 0.0
+    for i := 0; i < signalPeriod; i++ {
+        sum += difSeries[i]
+    }
+    ema := sum / float64(signalPeriod)
 
-	// 计算12期和26期EMA
-	ema12 := calculateEMA(klines, 12)
-	ema26 := calculateEMA(klines, 26)
+    // 计算后续的EMA值
+    multiplier := 2.0 / float64(signalPeriod+1)
+    for i := signalPeriod; i < len(difSeries); i++ {
+        ema = (difSeries[i]-ema)*multiplier + ema
+    }
 
-	// MACD = EMA12 - EMA26
-	return ema12 - ema26
+    return ema
+}
+// buildDIFSeries 构建DIF值序列
+func buildDIFSeries(klines []Kline, shortPeriod, longPeriod int) []float64 {
+    var difSeries []float64
+    // 从第 longPeriod 根K线开始，才能计算出有效的EMA(longPeriod)
+    for i := longPeriod - 1; i < len(klines); i++ {
+        // 截取从开始到当前K线的子切片计算EMA
+        subKlines := klines[:i+1]
+        emaS := calculateEMA(subKlines, shortPeriod)
+        emaL := calculateEMA(subKlines, longPeriod)
+        difSeries = append(difSeries, emaS-emaL)
+    }
+    return difSeries
+}
+// calculateMACD 计算MACD指标的正确实现
+// 参数: klines - K线数据切片, shortPeriod - 短期EMA周期(如12), longPeriod - 长期EMA周期(如26), signalPeriod - 信号线周期(如9)
+// 返回值: dif - 快线, dea - 慢线(信号线), histogram - 柱状值
+func calculateMACD(klines []Kline, shortPeriod, longPeriod, signalPeriod int) (float64, float64, float64) {
+    // 1. 数据长度检查
+    totalPeriod := longPeriod
+    if shortPeriod > longPeriod {
+        totalPeriod = shortPeriod
+    }
+    if len(klines) < totalPeriod {
+        return 0, 0, 0
+    }
+
+    // 2. 计算DIF = EMA(close, short) - EMA(close, long)
+    emaShort := calculateEMA(klines, shortPeriod)
+    emaLong := calculateEMA(klines, longPeriod)
+    dif := emaShort - emaLong
+
+    // 3. 关键：需要先构建历史的DIF值序列，才能计算DEA
+    // 获取从开始到当前的所有DIF值（需要一个辅助函数）
+    difSeries := buildDIFSeries(klines, shortPeriod, longPeriod)
+    if len(difSeries) < signalPeriod {
+        return dif, 0, 0 // 如果DIF序列长度不足，无法计算有效的DEA
+    }
+
+    // 4. 计算DEA = EMA(DIF序列, signalPeriod)
+    dea := calculateEMAOfDIF(difSeries, signalPeriod)
+
+    // 5. 计算MACD柱状图 (Histogram)
+    histogram := dif - dea
+
+    // return dif, dea, histogram  （快线） （慢线）（柱状图）
+    return dif, dea, histogram
 }
 
 // calculateRSI 计算RSI
@@ -244,10 +299,18 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 	data := &IntradayData{
 		MidPrices:   make([]float64, 0, 10),
 		EMA20Values: make([]float64, 0, 10),
-		MACDValues:  make([]float64, 0, 10),
+		MACDValues10208:  make([]float64, 0, 10),
+		MACDValues12269:  make([]float64, 0, 10),
 		RSI7Values:  make([]float64, 0, 10),
+		RSI9Values:  make([]float64, 0, 10),
+		RSI10Values: make([]float64, 0, 10),
 		RSI14Values: make([]float64, 0, 10),
 	}
+	// 计算ATR
+	data.ATR6 = calculateATR(klines, 6)
+	data.ATR10 = calculateATR(klines, 10)
+	data.ATR12 = calculateATR(klines, 12)
+	data.ATR14 = calculateATR(klines, 14)
 
 	// 获取最近10个数据点
 	start := len(klines) - 10
@@ -266,14 +329,29 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 
 		// 计算每个点的MACD
 		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
-			data.MACDValues = append(data.MACDValues, macd)
+			dif, _, _  := calculateMACD(klines[:i+1],10,20,8)
+			macd := dif
+			data.MACDValues10208 = append(data.MACDValues10208, macd)
+		}
+		// 计算每个点的MACD
+		if i >= 25 {
+			dif, _, _  := calculateMACD(klines[:i+1],12,26,9)
+			macd := dif
+			data.MACDValues12269 = append(data.MACDValues12269, macd)
 		}
 
 		// 计算每个点的RSI
 		if i >= 7 {
 			rsi7 := calculateRSI(klines[:i+1], 7)
 			data.RSI7Values = append(data.RSI7Values, rsi7)
+		}
+		if i >= 9 {
+			rsi9 := calculateRSI(klines[:i+1], 9)
+			data.RSI9Values = append(data.RSI9Values, rsi9)
+		}
+		if i >= 10 {
+			rsi10 := calculateRSI(klines[:i+1], 10)
+			data.RSI10Values = append(data.RSI10Values, rsi10)
 		}
 		if i >= 14 {
 			rsi14 := calculateRSI(klines[:i+1], 14)
@@ -287,8 +365,10 @@ func calculateIntradaySeries(klines []Kline) *IntradayData {
 // calculateLongerTermData 计算长期数据
 func calculateLongerTermData(klines []Kline) *LongerTermData {
 	data := &LongerTermData{
-		MACDValues:  make([]float64, 0, 10),
+		MACDValues142810:  make([]float64, 0, 10),
+		MACDValues12269:  make([]float64, 0, 10),
 		RSI14Values: make([]float64, 0, 10),
+		RSI21Values: make([]float64, 0, 10),
 	}
 
 	// 计算EMA
@@ -297,6 +377,8 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 
 	// 计算ATR
 	data.ATR3 = calculateATR(klines, 3)
+	data.ATR10 = calculateATR(klines, 10)
+	data.ATR12 = calculateATR(klines, 12)
 	data.ATR14 = calculateATR(klines, 14)
 
 	// 计算成交量
@@ -318,12 +400,22 @@ func calculateLongerTermData(klines []Kline) *LongerTermData {
 
 	for i := start; i < len(klines); i++ {
 		if i >= 25 {
-			macd := calculateMACD(klines[:i+1])
-			data.MACDValues = append(data.MACDValues, macd)
+			dif, _, _  := calculateMACD(klines[:i+1],14,28,10)
+			macd := dif
+			data.MACDValues142810 = append(data.MACDValues142810, macd)
+		}
+		if i >= 25 {
+			dif, _, _  := calculateMACD(klines[:i+1],12,26,9)
+			macd := dif
+			data.MACDValues12269 = append(data.MACDValues12269, macd)
 		}
 		if i >= 14 {
 			rsi14 := calculateRSI(klines[:i+1], 14)
 			data.RSI14Values = append(data.RSI14Values, rsi14)
+		}
+		if i >= 21 {
+			rsi21 := calculateRSI(klines[:i+1], 21)
+			data.RSI21Values = append(data.RSI21Values, rsi21)
 		}
 	}
 
@@ -356,7 +448,10 @@ func getOpenInterestData(symbol string) (*OIData, error) {
 	}
 
 	oi, _ := strconv.ParseFloat(result.OpenInterest, 64)
-
+	if err != nil {
+		// 如果解析失败，返回明确错误，调用方可决定是否忽略
+		return nil, fmt.Errorf("parse openInterest failed: %w", err)
+	}
 	return &OIData{
 		Latest:  oi,
 		Average: oi * 0.999, // 近似平均值
@@ -393,6 +488,9 @@ func getFundingRate(symbol string) (float64, error) {
 	}
 
 	rate, _ := strconv.ParseFloat(result.LastFundingRate, 64)
+	if err != nil {
+		return 0, fmt.Errorf("parse funding rate failed: %w", err)
+	}
 	return rate, nil
 }
 
@@ -417,17 +515,18 @@ func Format(data *Data) string {
     // 3分钟数据展示（原有）
     if data.IntradaySeries != nil {
         sb.WriteString("日内数据（3分钟周期，从旧到新）:\n\n")
-        if len(data.IntradaySeries.MidPrices) > 0 {
+		sb.WriteString(fmt.Sprintf("10期ATR: %.3f \n\n", data.IntradaySeries.ATR10))
+		if len(data.IntradaySeries.MidPrices) > 0 {
             sb.WriteString(fmt.Sprintf("中间价: %s\n\n", formatFloatSlice(data.IntradaySeries.MidPrices)))
         }
         if len(data.IntradaySeries.EMA20Values) > 0 {
             sb.WriteString(fmt.Sprintf("20期EMA指标: %s\n\n", formatFloatSlice(data.IntradaySeries.EMA20Values)))
         }
-        if len(data.IntradaySeries.MACDValues) > 0 {
-            sb.WriteString(fmt.Sprintf("MACD指标: %s\n\n", formatFloatSlice(data.IntradaySeries.MACDValues)))
+        if len(data.IntradaySeries.MACDValues10208) > 0 {
+            sb.WriteString(fmt.Sprintf("MACD(10,20,8)指标: %s\n\n", formatFloatSlice(data.IntradaySeries.MACDValues10208)))
         }
-        if len(data.IntradaySeries.RSI7Values) > 0 {
-            sb.WriteString(fmt.Sprintf("7期RSI指标: %s\n\n", formatFloatSlice(data.IntradaySeries.RSI7Values)))
+        if len(data.IntradaySeries.RSI10Values) > 0 {
+            sb.WriteString(fmt.Sprintf("10期RSI指标: %s\n\n", formatFloatSlice(data.IntradaySeries.RSI10Values)))
         }
         if len(data.IntradaySeries.RSI14Values) > 0 {
             sb.WriteString(fmt.Sprintf("14期RSI指标: %s\n\n", formatFloatSlice(data.IntradaySeries.RSI14Values)))
@@ -437,14 +536,15 @@ func Format(data *Data) string {
     // 新增：15分钟数据展示
     if data.Intraday15m != nil {
         sb.WriteString("日内数据（15分钟周期，从旧到新）:\n\n")
-        if len(data.Intraday15m.MidPrices) > 0 {
+		sb.WriteString(fmt.Sprintf("12期ATR: %.3f \n\n", data.Intraday15m.ATR12))
+		if len(data.Intraday15m.MidPrices) > 0 {
             sb.WriteString(fmt.Sprintf("中间价: %s\n\n", formatFloatSlice(data.Intraday15m.MidPrices)))
         }
         if len(data.Intraday15m.EMA20Values) > 0 {
             sb.WriteString(fmt.Sprintf("20期EMA指标: %s\n\n", formatFloatSlice(data.Intraday15m.EMA20Values)))
         }
-        if len(data.Intraday15m.MACDValues) > 0 {
-            sb.WriteString(fmt.Sprintf("MACD指标: %s\n\n", formatFloatSlice(data.Intraday15m.MACDValues)))
+        if len(data.Intraday15m.MACDValues12269) > 0 {
+            sb.WriteString(fmt.Sprintf("MACD(12,26,9)指标: %s\n\n", formatFloatSlice(data.Intraday15m.MACDValues12269)))
         }
         if len(data.Intraday15m.RSI7Values) > 0 {
             sb.WriteString(fmt.Sprintf("7期RSI指标: %s\n\n", formatFloatSlice(data.Intraday15m.RSI7Values)))
@@ -457,17 +557,19 @@ func Format(data *Data) string {
     // 新增：1小时数据展示
     if data.Intraday1h != nil {
         sb.WriteString("日内数据（1小时周期，从旧到新）:\n\n")
-        if len(data.Intraday1h.MidPrices) > 0 {
+		sb.WriteString(fmt.Sprintf("6期ATR: %.3f vs 14期ATR: %.3f\n\n",data.Intraday1h.ATR6, data.Intraday1h.ATR14))
+
+		if len(data.Intraday1h.MidPrices) > 0 {
             sb.WriteString(fmt.Sprintf("中间价: %s\n\n", formatFloatSlice(data.Intraday1h.MidPrices)))
         }
         if len(data.Intraday1h.EMA20Values) > 0 {
             sb.WriteString(fmt.Sprintf("20期EMA指标: %s\n\n", formatFloatSlice(data.Intraday1h.EMA20Values)))
         }
-        if len(data.Intraday1h.MACDValues) > 0 {
-            sb.WriteString(fmt.Sprintf("MACD指标: %s\n\n", formatFloatSlice(data.Intraday1h.MACDValues)))
+        if len(data.Intraday1h.MACDValues12269) > 0 {
+            sb.WriteString(fmt.Sprintf("MACD(12,26,9)指标: %s\n\n", formatFloatSlice(data.Intraday1h.MACDValues12269)))
         }
-        if len(data.Intraday1h.RSI7Values) > 0 {
-            sb.WriteString(fmt.Sprintf("7期RSI指标: %s\n\n", formatFloatSlice(data.Intraday1h.RSI7Values)))
+        if len(data.Intraday1h.RSI9Values) > 0 {
+            sb.WriteString(fmt.Sprintf("9期RSI指标: %s\n\n", formatFloatSlice(data.Intraday1h.RSI9Values)))
         }
         if len(data.Intraday1h.RSI14Values) > 0 {
             sb.WriteString(fmt.Sprintf("14期RSI指标: %s\n\n", formatFloatSlice(data.Intraday1h.RSI14Values)))
@@ -483,11 +585,14 @@ func Format(data *Data) string {
             data.LongerTermContext.ATR3, data.LongerTermContext.ATR14))
         sb.WriteString(fmt.Sprintf("当前成交量: %.3f vs 平均成交量: %.3f\n\n",
             data.LongerTermContext.CurrentVolume, data.LongerTermContext.AverageVolume))
-        if len(data.LongerTermContext.MACDValues) > 0 {
-            sb.WriteString(fmt.Sprintf("MACD指标: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues)))
+        if len(data.LongerTermContext.MACDValues142810) > 0 {
+            sb.WriteString(fmt.Sprintf("MACD(14,28,10)指标: %s\n\n", formatFloatSlice(data.LongerTermContext.MACDValues142810)))
         }
         if len(data.LongerTermContext.RSI14Values) > 0 {
             sb.WriteString(fmt.Sprintf("14期RSI指标: %s\n\n", formatFloatSlice(data.LongerTermContext.RSI14Values)))
+        }
+        if len(data.LongerTermContext.RSI21Values) > 0 {
+            sb.WriteString(fmt.Sprintf("21期RSI指标: %s\n\n", formatFloatSlice(data.LongerTermContext.RSI21Values)))
         }
     }
 
@@ -500,8 +605,8 @@ func Format(data *Data) string {
             data.LongerTerm1d.ATR3, data.LongerTerm1d.ATR14))
         sb.WriteString(fmt.Sprintf("当前成交量: %.3f vs 平均成交量: %.3f\n\n",
             data.LongerTerm1d.CurrentVolume, data.LongerTerm1d.AverageVolume))
-        if len(data.LongerTerm1d.MACDValues) > 0 {
-            sb.WriteString(fmt.Sprintf("MACD指标: %s\n\n", formatFloatSlice(data.LongerTerm1d.MACDValues)))
+        if len(data.LongerTerm1d.MACDValues12269) > 0 {
+            sb.WriteString(fmt.Sprintf("MACD(12,26,9)指标: %s\n\n", formatFloatSlice(data.LongerTerm1d.MACDValues12269)))
         }
         if len(data.LongerTerm1d.RSI14Values) > 0 {
             sb.WriteString(fmt.Sprintf("14期RSI指标: %s\n\n", formatFloatSlice(data.LongerTerm1d.RSI14Values)))

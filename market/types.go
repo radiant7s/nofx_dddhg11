@@ -29,25 +29,42 @@ type OIData struct {
 	Average float64
 }
 
-// IntradayData 日内数据(3分钟间隔)
+// IntradayData 日内数据(3分钟,15,1小时)
 type IntradayData struct {
+	ATR6          float64
+	ATR10         float64
+	ATR12         float64
+	ATR14         float64
+
 	MidPrices   []float64
 	EMA20Values []float64
-	MACDValues  []float64
+
+	MACDValues10208  []float64
+	MACDValues12269  []float64
+
 	RSI7Values  []float64
+	RSI9Values  []float64
+	RSI10Values []float64
 	RSI14Values []float64
 }
 
-// LongerTermData 长期数据(4小时时间框架)
+// LongerTermData 长期数据(4小时时间框架1天)
 type LongerTermData struct {
 	EMA20         float64
 	EMA50         float64
+
 	ATR3          float64
+	ATR10         float64
+	ATR12         float64
 	ATR14         float64
+
 	CurrentVolume float64
 	AverageVolume float64
-	MACDValues    []float64
+
+	MACDValues142810    []float64
+	MACDValues12269    []float64
 	RSI14Values   []float64
+	RSI21Values   []float64
 }
 
 // Binance API 响应结构
