@@ -43,8 +43,8 @@ type PositionInfo struct {
 type AccountInfo struct {
 	TotalEquity      float64 `json:"total_equity"`      // 账户净值
 	AvailableBalance float64 `json:"available_balance"` // 可用余额
-	TotalPnL         float64 `json:"total_pnl"`         // 总盈亏
-	TotalPnLPct      float64 `json:"total_pnl_pct"`     // 总盈亏百分比
+	TotalPnL         float64 `json:"total_pnl"`         // 总盈亏（相对初始余额）
+	TotalPnLPct      float64 `json:"total_pnl_pct"`     // 未实现盈亏百分比（基于持仓价值，非基于余额）
 	MarginUsed       float64 `json:"margin_used"`       // 已用保证金
 	MarginUsedPct    float64 `json:"margin_used_pct"`   // 保证金使用率
 	PositionCount    int     `json:"position_count"`    // 持仓数量
@@ -360,7 +360,7 @@ func buildUserPrompt(ctx *Context) string {
 	}
 
 	// 账户
-	sb.WriteString(fmt.Sprintf("账户: 净值%.2f | 余额%.2f (%.1f%%) | 盈亏%+.2f%% | 保证金%.1f%% | 持仓%d个\n",
+	sb.WriteString(fmt.Sprintf("账户: 净值%.2f | 余额%.2f (%.1f%%) | 未实现盈亏%+.2f%% | 保证金%.1f%% | 持仓%d个\n",
 		ctx.Account.TotalEquity,
 		ctx.Account.AvailableBalance,
 		(ctx.Account.AvailableBalance/ctx.Account.TotalEquity)*100,

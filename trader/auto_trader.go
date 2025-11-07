@@ -720,11 +720,24 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		return nil, fmt.Errorf("获取候选币种失败: %w", err)
 	}
 
-	// 4. 计算总盈亏
+	// 4. 计算总盈亏和未实现盈亏百分比
 	totalPnL := totalEquity - at.initialBalance
+	
+	// 计算基于持仓价值的未实现盈亏百分比（而非基于初始余额）
 	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
+	totalPositionValue := 0.0 // 所有持仓的总价值
+	totalUnrealizedPnL := 0.0  // 所有持仓的未实现盈亏
+	
+	// 累加所有持仓的价值和未实现盈亏
+	for _, posInfo := range positionInfos {
+		positionValue := posInfo.Quantity * posInfo.MarkPrice
+		totalPositionValue += positionValue
+		totalUnrealizedPnL += posInfo.UnrealizedPnL
+	}
+	
+	// 如果有持仓，则基于持仓价值计算未实现盈亏百分比
+	if totalPositionValue > 0 {
+		totalPnLPct = (totalUnrealizedPnL / totalPositionValue) * 100
 	}
 
 	marginUsedPct := 0.0
@@ -1391,9 +1404,25 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	}
 
 	totalPnL := totalEquity - at.initialBalance
+	
+	// 计算基于持仓价值的未实现盈亏百分比（与决策引擎保持一致）
 	totalPnLPct := 0.0
-	if at.initialBalance > 0 {
-		totalPnLPct = (totalPnL / at.initialBalance) * 100
+	totalPositionValue := 0.0 // 所有持仓的总价值
+	
+	// 累加所有持仓的价值
+	for _, pos := range positions {
+		markPrice := pos["markPrice"].(float64)
+		quantity := pos["positionAmt"].(float64)
+		if quantity < 0 {
+			quantity = -quantity
+		}
+		positionValue := quantity * markPrice
+		totalPositionValue += positionValue
+	}
+	
+	// 如果有持仓，则基于持仓价值计算未实现盈亏百分比
+	if totalPositionValue > 0 {
+		totalPnLPct = (totalUnrealizedPnL / totalPositionValue) * 100
 	}
 
 	marginUsedPct := 0.0
@@ -1410,7 +1439,7 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 
 		// 盈亏统计
 		"total_pnl":            totalPnL,           // 总盈亏 = equity - initial
-		"total_pnl_pct":        totalPnLPct,        // 总盈亏百分比
+		"total_pnl_pct":        totalPnLPct,        // 未实现盈亏百分比（基于持仓价值）
 		"total_unrealized_pnl": totalUnrealizedPnL, // 未实现盈亏（从持仓计算）
 		"initial_balance":      at.initialBalance,  // 初始余额
 		"daily_pnl":            at.dailyPnL,        // 日盈亏
