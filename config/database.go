@@ -195,60 +195,7 @@ func (d *Database) createTables() error {
 		}
 	}
 
-	// 迁移旧的 position_meta（若存在旧的 UNIQUE(schema) 且缺少 trader_id）
-	// 如果旧表没有 trader_id 列，则创建新表并迁移数据，保留原有 stop_loss_condition
-	// 这样可以在不丢失数据的情况下新增 trader_id 字段并支持历史记录
-	var colCount int
-	var err error
-	err = d.db.QueryRow("PRAGMA table_info(position_meta)").Scan(&colCount)
-	if err == nil {
-		// 如果查询成功，我们进一步检查是否存在 trader_id 列
-		rows, err := d.db.Query(`PRAGMA table_info(position_meta)`)
-		if err == nil {
-			defer rows.Close()
-			hasTraderID := false
-			for rows.Next() {
-				var cid int
-				var name, ctype string
-				var notnull, dfltValue, pk sql.NullString
-				if err := rows.Scan(&cid, &name, &ctype, &notnull, &dfltValue, &pk); err == nil {
-					if name == "trader_id" {
-						hasTraderID = true
-						break
-					}
-				}
-			}
-			if !hasTraderID {
-				log.Printf("🔄 迁移 position_meta：添加 trader_id 并保留历史记录")
-				// 创建新表
-				_, err = d.db.Exec(`
-					CREATE TABLE IF NOT EXISTS position_meta_new (
-						id INTEGER PRIMARY KEY AUTOINCREMENT,
-						symbol TEXT NOT NULL,
-						side TEXT NOT NULL,
-						trader_id TEXT DEFAULT 'default',
-						stop_loss_condition TEXT DEFAULT '',
-						decision_json TEXT DEFAULT '',
-						order_id TEXT DEFAULT '',
-						open_time INTEGER DEFAULT 0,
-						is_open INTEGER DEFAULT 1
-					)
-				`)
-				if err == nil {
-					// 复制旧数据到新表，把 trader_id 设为 'default'
-					_, err = d.db.Exec(`
-						INSERT INTO position_meta_new (symbol, side, stop_loss_condition, decision_json, order_id, open_time, is_open, trader_id)
-						SELECT symbol, side, stop_loss_condition, '' as decision_json, '' as order_id, open_time, is_open, 'default' FROM position_meta
-					`)
-					if err == nil {
-						// 删除旧表并重命名
-						d.db.Exec(`DROP TABLE position_meta`)
-						d.db.Exec(`ALTER TABLE position_meta_new RENAME TO position_meta`)
-					}
-				}
-			}
-		}
-	}
+	// 使用全量建表保证列齐全；如需迁移，请在外部手动重建数据库以简化代码路径
 
 	// 为现有数据库添加新字段（向后兼容）
 	alterQueries := []string{
@@ -269,8 +216,7 @@ func (d *Database) createTables() error {
 		`ALTER TABLE traders ADD COLUMN system_prompt_template TEXT DEFAULT 'default'`, // 系统提示词模板名称
 		`ALTER TABLE ai_models ADD COLUMN custom_api_url TEXT DEFAULT ''`,              // 自定义API地址
 		`ALTER TABLE ai_models ADD COLUMN custom_model_name TEXT DEFAULT ''`,           // 自定义模型名称
-		`ALTER TABLE position_meta ADD COLUMN decision_json TEXT DEFAULT ''`,           // 开仓时的完整执行决策 JSON（单条）
-		`ALTER TABLE position_meta ADD COLUMN order_id TEXT DEFAULT ''`,                // 开仓主订单ID（可选）
+	// 精简：position_meta 列在建表时已完整，不再重复 ALTER（保持其他表的向后兼容）
 	}
 
 	for _, query := range alterQueries {
@@ -279,6 +225,7 @@ func (d *Database) createTables() error {
 	}
 
 	// 检查是否需要迁移exchanges表的主键结构
+	var err error
 	err = d.migrateExchangesTable()
 	if err != nil {
 		log.Printf("⚠️ 迁移exchanges表失败: %v", err)
@@ -435,6 +382,9 @@ func (d *Database) migrateExchangesTable() error {
 	log.Printf("✅ exchanges表迁移完成")
 	return nil
 }
+
+// hasColumn 判断表中是否存在某列
+// 迁移与自修复逻辑已移除：保持代码精简，建议对旧库使用全量重建
 
 // PositionStopLossInfo 表示持仓的止损条件记录（包含 trader_id 和 open_time）
 type PositionStopLossInfo struct {
