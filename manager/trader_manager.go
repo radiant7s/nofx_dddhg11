@@ -188,6 +188,8 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		return fmt.Errorf("trader ID '%s' 已存在", traderCfg.ID)
 	}
 
+	log.Printf("🔧 addTraderFromDB 开始: trader=%s user=%s useCoinPool=%v coinPoolURL=%s oiTopURL=%s", traderCfg.Name, userID, traderCfg.UseCoinPool, coinPoolURL, oiTopURL)
+
 	// 处理交易币种列表
 	var tradingCoins []string
 	if traderCfg.TradingSymbols != "" {
@@ -204,6 +206,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	// 如果没有指定交易币种，使用默认币种
 	if len(tradingCoins) == 0 {
 		tradingCoins = defaultCoins
+		log.Printf("ℹ️ addTraderFromDB: 未指定 tradingSymbols，使用 defaultCoins (%d): %v", len(defaultCoins), defaultCoins)
 	}
 
 	// 根据交易员配置决定是否使用信号源
@@ -215,6 +218,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 
 	// 如果启用了 Coin Pool，则优先从 Coin Pool / OI Top 拉取并合并候选币种
 	if traderCfg.UseCoinPool && (coinPoolURL != "" || oiTopURL != "") {
+		log.Printf("🔎 addTraderFromDB: 准备从信号源拉取候选币种，coinPoolURL='%s' oiTopURL='%s'", coinPoolURL, oiTopURL)
 		if coinPoolURL != "" {
 			pool.SetCoinPoolAPI(coinPoolURL)
 		}
@@ -260,6 +264,8 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 			}
 			tradingCoins = finalList
 
+			log.Printf("✓ addTraderFromDB: 从信号源获取到 %d 个合并币种，去重后 %d 个", len(mergedSymbols), len(finalList))
+
 			if database != nil {
 				if b, err := json.Marshal(finalList); err == nil {
 					if err2 := database.SetSystemConfig("default_coins", string(b)); err2 != nil {
@@ -275,7 +281,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 				log.Printf("⚠️ 无法写回系统 default_coins：数据库对象为空")
 			}
 		} else {
-			log.Printf("⚠️ 未从 Coin Pool / OI Top 获取到有效币种，保留原始 tradingCoins 或 defaultCoins")
+			log.Printf("⚠️ addTraderFromDB: 未从 Coin Pool / OI Top 获取到有效币种，保留原始 tradingCoins 或 defaultCoins (current count=%d)", len(tradingCoins))
 		}
 	}
 
@@ -418,6 +424,13 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 			log.Printf("⚠️ 未从 Coin Pool / OI Top 获取到有效币种，保留原始 tradingCoins 或 defaultCoins")
 		}
 	}
+
+	// 计算 sample（最多展示前5个）以便日志可读
+	sample := tradingCoins
+	if len(tradingCoins) > 5 {
+		sample = tradingCoins[:5]
+	}
+	log.Printf("ℹ️ addTraderFromDB: 最终 tradingCoins 数量=%d sample=%v effectiveCoinPoolURL=%s", len(tradingCoins), sample, effectiveCoinPoolURL)
 
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{

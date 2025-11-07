@@ -1544,6 +1544,8 @@ func sortDecisionsByPriority(decisions []decision.Decision) []decision.Decision 
 
 // getCandidateCoins 获取交易员的候选币种列表
 func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
+	log.Printf("🔧 getCandidateCoins 开始: trader=%s tradingCoins=%d defaultCoins=%d coinPoolAPIURL=%s", at.name, len(at.tradingCoins), len(at.defaultCoins), at.config.CoinPoolAPIURL)
+
 	if len(at.tradingCoins) == 0 {
 		// 使用数据库配置的默认币种列表
 		var candidateCoins []decision.CandidateCoin
@@ -1557,15 +1559,18 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 					Sources: []string{"default"}, // 标记为数据库默认币种
 				})
 			}
-			log.Printf("📋 [%s] 使用数据库默认币种: %d个币种 %v",
-				at.name, len(candidateCoins), at.defaultCoins)
+			log.Printf("📋 [%s] 使用数据库默认币种: %d个币种 %v", at.name, len(candidateCoins), at.defaultCoins)
+			log.Printf("🔍 getCandidateCoins: 返回 %d 个候选币种 (来源: default)", len(candidateCoins))
 			return candidateCoins, nil
 		} else {
 			// 如果数据库中没有配置默认币种，则使用AI500+OI Top作为fallback
 			const ai500Limit = 20 // AI500取前20个评分最高的币种
 
+			log.Printf("🔎 getCandidateCoins: defaultCoins 为空，尝试使用 pool.GetMergedCoinPool(ai500Limit=%d)", ai500Limit)
+
 			mergedPool, err := pool.GetMergedCoinPool(ai500Limit)
 			if err != nil {
+				log.Printf("⚠️ getCandidateCoins: pool.GetMergedCoinPool 失败: %v", err)
 				return nil, fmt.Errorf("获取合并币种池失败: %w", err)
 			}
 
@@ -1577,14 +1582,14 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 					Sources: sources, // "ai500" 和/或 "oi_top"
 				})
 			}
-
-			log.Printf("📋 [%s] 数据库无默认币种配置，使用AI500+OI Top: AI500前%d + OI_Top20 = 总计%d个候选币种",
-				at.name, ai500Limit, len(candidateCoins))
+			log.Printf("📋 [%s] 数据库无默认币种配置，使用AI500+OI Top: AI500前%d + OI_Top20 = 总计%d个候选币种", at.name, ai500Limit, len(candidateCoins))
+			log.Printf("🔍 getCandidateCoins: 返回 %d 个候选币种 (来源: ai500/oi_top)", len(candidateCoins))
 			return candidateCoins, nil
 		}
 	} else {
 		// 使用自定义币种列表
 		var candidateCoins []decision.CandidateCoin
+		log.Printf("🔎 getCandidateCoins: 使用自定义 tradingCoins (%d): %v", len(at.tradingCoins), at.tradingCoins)
 		for _, coin := range at.tradingCoins {
 			// 确保币种格式正确（转为大写USDT交易对）
 			symbol := normalizeSymbol(coin)
@@ -1594,8 +1599,7 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 			})
 		}
 
-		log.Printf("📋 [%s] 使用自定义币种: %d个币种 %v",
-			at.name, len(candidateCoins), at.tradingCoins)
+		log.Printf("� getCandidateCoins: 返回 %d 个候选币种 (来源: custom)", len(candidateCoins))
 		return candidateCoins, nil
 	}
 }
