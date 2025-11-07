@@ -440,7 +440,8 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 	traderID := fmt.Sprintf("%s_%s_%d", req.ExchangeID, req.AIModelID, time.Now().Unix())
 
 	// 设置默认值
-	isCrossMargin := true // 默认为全仓模式
+	// isCrossMargin := true // 默认为全仓模式
+	isCrossMargin := false // 默认为逐仓模式
 	if req.IsCrossMargin != nil {
 		isCrossMargin = *req.IsCrossMargin
 	}
