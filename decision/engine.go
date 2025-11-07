@@ -400,13 +400,29 @@ func buildUserPrompt(ctx *Context) string {
 	}
 
 	// 候选币种（完整市场数据）
-	sb.WriteString(fmt.Sprintf("## 候选币种 (%d个)\n\n", len(ctx.MarketDataMap)))
-	displayedCount := 0
+	// 过滤：不显示已存在于当前持仓中的币种，避免重复
+	positionSymbols := make(map[string]bool)
+	for _, p := range ctx.Positions {
+		positionSymbols[p.Symbol] = true
+	}
+
+	// 先收集所有有市场数据且不在持仓内的候选币种，以便正确显示数量
+	var displayedCandidates []CandidateCoin
 	for _, coin := range ctx.CandidateCoins {
-		marketData, hasData := ctx.MarketDataMap[coin.Symbol]
-		if !hasData {
+		if _, hasData := ctx.MarketDataMap[coin.Symbol]; !hasData {
 			continue
 		}
+		if positionSymbols[coin.Symbol] {
+			// 跳过已持仓的币种
+			continue
+		}
+		displayedCandidates = append(displayedCandidates, coin)
+	}
+
+	sb.WriteString(fmt.Sprintf("## 候选币种 (%d个)\n\n", len(displayedCandidates)))
+	displayedCount := 0
+	for _, coin := range displayedCandidates {
+		marketData := ctx.MarketDataMap[coin.Symbol]
 		displayedCount++
 
 		sourceTags := ""
