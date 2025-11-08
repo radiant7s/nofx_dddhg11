@@ -1172,6 +1172,8 @@ func (s *Server) handleGetTraderConfig(c *gin.Context) {
 		"is_cross_margin":       traderConfig.IsCrossMargin,
 		"use_coin_pool":         traderConfig.UseCoinPool,
 		"use_oi_top":            traderConfig.UseOITop,
+		"coin_pool_api_url":     traderConfig.CoinPoolAPIURL,
+		"oi_top_api_url":        traderConfig.OITopAPIURL,
 		"is_running":            isRunning,
 	}
 
