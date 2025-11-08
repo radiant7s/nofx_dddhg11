@@ -345,8 +345,7 @@ func fetchSiliconFlowUserInfo(c *Client) (*siliconFlowUserInfo, error) {
 	// SiliconFlow 基础地址通常为 https://api.siliconflow.cn/v1
 	// 其用户信息接口：GET /user/info （不需要 /v1 前缀再追加）
 	// 若 BaseURL 末尾存在 /v1，需要向上一级取 /user/info；这里直接裁掉末尾的 /v1 以保证兼容。
-	base := strings.TrimSuffix(c.BaseURL, "/v1")
-	url := fmt.Sprintf("%s/user/info", strings.TrimRight(base, "/"))
+	var url = "https://api.siliconflow.cn/v1/user/info"
 
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
