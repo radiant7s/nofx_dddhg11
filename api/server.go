@@ -362,6 +362,8 @@ type CreateTraderRequest struct {
 	IsCrossMargin        *bool   `json:"is_cross_margin"`        // 指针类型，nil表示使用默认值true
 	UseCoinPool          bool    `json:"use_coin_pool"`
 	UseOITop             bool    `json:"use_oi_top"`
+	CoinPoolAPIURL       string  `json:"coin_pool_api_url"`      // 币种池API URL
+	OITopAPIURL          string  `json:"oi_top_api_url"`         // OI Top API URL
 }
 
 type ModelConfig struct {
@@ -562,6 +564,8 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		TradingSymbols:       req.TradingSymbols,
 		UseCoinPool:          req.UseCoinPool,
 		UseOITop:             req.UseOITop,
+		CoinPoolAPIURL:       req.CoinPoolAPIURL,
+		OITopAPIURL:          req.OITopAPIURL,
 		CustomPrompt:         req.CustomPrompt,
 		OverrideBasePrompt:   req.OverrideBasePrompt,
 		SystemPromptTemplate: systemPromptTemplate,
@@ -607,6 +611,10 @@ type UpdateTraderRequest struct {
 	CustomPrompt        string  `json:"custom_prompt"`
 	OverrideBasePrompt  bool    `json:"override_base_prompt"`
 	IsCrossMargin       *bool   `json:"is_cross_margin"`
+	UseCoinPool         bool    `json:"use_coin_pool"`
+	UseOITop            bool    `json:"use_oi_top"`
+	CoinPoolAPIURL      string  `json:"coin_pool_api_url"`      // 币种池API URL
+	OITopAPIURL         string  `json:"oi_top_api_url"`         // OI Top API URL
 }
 
 // handleUpdateTrader 更新交易员配置
@@ -675,6 +683,10 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		BTCETHLeverage:       btcEthLeverage,
 		AltcoinLeverage:      altcoinLeverage,
 		TradingSymbols:       req.TradingSymbols,
+		UseCoinPool:          req.UseCoinPool,
+		UseOITop:             req.UseOITop,
+		CoinPoolAPIURL:       req.CoinPoolAPIURL,
+		OITopAPIURL:          req.OITopAPIURL,
 		CustomPrompt:         req.CustomPrompt,
 		OverrideBasePrompt:   req.OverrideBasePrompt,
 		SystemPromptTemplate: existingTrader.SystemPromptTemplate, // 保持原值

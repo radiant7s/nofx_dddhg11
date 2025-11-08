@@ -48,7 +48,9 @@ type AutoTraderConfig struct {
 	AsterSigner     string // Aster API钱包地址
 	AsterPrivateKey string // Aster API钱包私钥
 
-	CoinPoolAPIURL string
+	// 信号源配置
+	CoinPoolAPIURL string // 币种池API URL
+	OITopAPIURL    string // OI Top API URL
 
 	// AI配置
 	UseQwen     bool
@@ -106,16 +108,16 @@ type AutoTrader struct {
 	lastResetTime         time.Time
 	stopUntil             time.Time
 	isRunning             bool
-	startTime             time.Time        // 系统启动时间
-	callCount             int              // AI调用次数
-	positionFirstSeenTime map[string]int64 // 持仓首次出现时间 (symbol_side -> timestamp毫秒)
-	stopMonitorCh         chan struct{}    // 用于停止监控goroutine
-	monitorWg             sync.WaitGroup   // 用于等待监控goroutine结束
-	peakPnLCache      map[string]float64 	 // 最高收益缓存 (symbol -> 峰值盈亏百分比)
-	peakPnLCacheMutex sync.RWMutex // 缓存读写锁
-	lastBalanceSyncTime   time.Time        // 上次余额同步时间
-	database              interface{}      // 数据库引用（用于自动更新余额）
-	userID                string           // 用户ID
+	startTime             time.Time          // 系统启动时间
+	callCount             int                // AI调用次数
+	positionFirstSeenTime map[string]int64   // 持仓首次出现时间 (symbol_side -> timestamp毫秒)
+	stopMonitorCh         chan struct{}      // 用于停止监控goroutine
+	monitorWg             sync.WaitGroup     // 用于等待监控goroutine结束
+	peakPnLCache          map[string]float64 // 最高收益缓存 (symbol -> 峰值盈亏百分比)
+	peakPnLCacheMutex     sync.RWMutex       // 缓存读写锁
+	lastBalanceSyncTime   time.Time          // 上次余额同步时间
+	database              interface{}        // 数据库引用（用于自动更新余额）
+	userID                string             // 用户ID
 }
 
 // NewAutoTrader 创建自动交易器
@@ -405,7 +407,7 @@ func (at *AutoTrader) runCycle() error {
 		})
 	}
 
-						log.Print(strings.Repeat("=", 70))
+	log.Print(strings.Repeat("=", 70))
 	for _, coin := range ctx.CandidateCoins {
 		record.CandidateCoins = append(record.CandidateCoins, coin.Symbol)
 	}
@@ -434,11 +436,11 @@ func (at *AutoTrader) runCycle() error {
 
 		// 打印系统提示词和AI思维链（即使有错误，也要输出以便调试）
 		if decision != nil {
-				log.Print("\n" + strings.Repeat("=", 70) + "\n")
-				log.Printf("📋 系统提示词 [模板: %s] (错误情况)", at.systemPromptTemplate)
-				log.Println(strings.Repeat("=", 70))
-				log.Println(decision.SystemPrompt)
-				log.Println(strings.Repeat("=", 70))
+			log.Print("\n" + strings.Repeat("=", 70) + "\n")
+			log.Printf("📋 系统提示词 [模板: %s] (错误情况)", at.systemPromptTemplate)
+			log.Println(strings.Repeat("=", 70))
+			log.Println(decision.SystemPrompt)
+			log.Println(strings.Repeat("=", 70))
 
 			if decision.CoTTrace != "" {
 				log.Print("\n" + strings.Repeat("-", 70) + "\n")
@@ -477,9 +479,9 @@ func (at *AutoTrader) runCycle() error {
 	//     }
 	// }
 	log.Println()
-				log.Print(strings.Repeat("-", 70))
+	log.Print(strings.Repeat("-", 70))
 	// 8. 对决策排序：确保先平仓后开仓（防止仓位叠加超限）
-				log.Print(strings.Repeat("-", 70))
+	log.Print(strings.Repeat("-", 70))
 
 	// 8. 对决策排序：确保先平仓后开仓（防止仓位叠加超限）
 	sortedDecisions := sortDecisionsByPriority(decision.Decisions)
@@ -624,12 +626,12 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		}
 		updateTime := at.positionFirstSeenTime[posKey]
 
-	// 从数据库回填止损触发条件（优先无时间依赖的 decision_json，其次才用旧的时间窗匹配）
-	stopCond := ""
-	// 注意：数据库中 map 的 key 使用的是 Symbol + "_" + strings.ToLower(side)
-	// 因此这里也要用相同的生成方式（保留 symbol 原始大小写），否则会导致 lookup 失败
-	pk := symbol + "_" + strings.ToLower(side)
-	if orecs, ok := openRecordMap[pk]; ok && len(orecs) > 0 {
+		// 从数据库回填止损触发条件（优先无时间依赖的 decision_json，其次才用旧的时间窗匹配）
+		stopCond := ""
+		// 注意：数据库中 map 的 key 使用的是 Symbol + "_" + strings.ToLower(side)
+		// 因此这里也要用相同的生成方式（保留 symbol 原始大小写），否则会导致 lookup 失败
+		pk := symbol + "_" + strings.ToLower(side)
+		if orecs, ok := openRecordMap[pk]; ok && len(orecs) > 0 {
 			// 选取当前 trader 的最新开仓记录
 			var best *config.PositionOpenRecord
 			for i := range orecs {
@@ -692,17 +694,17 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 		}
 
 		positionInfos = append(positionInfos, decision.PositionInfo{
-			Symbol:           symbol,
-			Side:             side,
-			EntryPrice:       entryPrice,
-			MarkPrice:        markPrice,
-			Quantity:         quantity,
-			Leverage:         leverage,
-			UnrealizedPnL:    unrealizedPnl,
-			UnrealizedPnLPct: pnlPct,
-			LiquidationPrice: liquidationPrice,
-			MarginUsed:       marginUsed,
-			UpdateTime:       updateTime,
+			Symbol:            symbol,
+			Side:              side,
+			EntryPrice:        entryPrice,
+			MarkPrice:         markPrice,
+			Quantity:          quantity,
+			Leverage:          leverage,
+			UnrealizedPnL:     unrealizedPnl,
+			UnrealizedPnLPct:  pnlPct,
+			LiquidationPrice:  liquidationPrice,
+			MarginUsed:        marginUsed,
+			UpdateTime:        updateTime,
 			StopLossCondition: stopCond,
 		})
 	}
@@ -722,19 +724,19 @@ func (at *AutoTrader) buildTradingContext() (*decision.Context, error) {
 
 	// 4. 计算总盈亏和未实现盈亏百分比
 	totalPnL := totalEquity - at.initialBalance
-	
+
 	// 计算基于持仓价值的未实现盈亏百分比（而非基于初始余额）
 	totalPnLPct := 0.0
 	totalPositionValue := 0.0 // 所有持仓的总价值
-	totalUnrealizedPnL := 0.0  // 所有持仓的未实现盈亏
-	
+	totalUnrealizedPnL := 0.0 // 所有持仓的未实现盈亏
+
 	// 累加所有持仓的价值和未实现盈亏
 	for _, posInfo := range positionInfos {
 		positionValue := posInfo.Quantity * posInfo.MarkPrice
 		totalPositionValue += positionValue
 		totalUnrealizedPnL += posInfo.UnrealizedPnL
 	}
-	
+
 	// 如果有持仓，则基于持仓价值计算未实现盈亏百分比
 	if totalPositionValue > 0 {
 		totalPnLPct = (totalUnrealizedPnL / totalPositionValue) * 100
@@ -1420,11 +1422,11 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 	}
 
 	totalPnL := totalEquity - at.initialBalance
-	
+
 	// 计算基于持仓价值的未实现盈亏百分比（与决策引擎保持一致）
 	totalPnLPct := 0.0
 	totalPositionValue := 0.0 // 所有持仓的总价值
-	
+
 	// 累加所有持仓的价值
 	for _, pos := range positions {
 		markPrice := pos["markPrice"].(float64)
@@ -1435,7 +1437,7 @@ func (at *AutoTrader) GetAccountInfo() (map[string]interface{}, error) {
 		positionValue := quantity * markPrice
 		totalPositionValue += positionValue
 	}
-	
+
 	// 如果有持仓，则基于持仓价值计算未实现盈亏百分比
 	if totalPositionValue > 0 {
 		totalPnLPct = (totalUnrealizedPnL / totalPositionValue) * 100
@@ -1582,11 +1584,11 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 			// 如果数据库中没有配置默认币种，则使用AI500+OI Top作为fallback
 			const ai500Limit = 20 // AI500取前20个评分最高的币种
 
-			log.Printf("🔎 getCandidateCoins: defaultCoins 为空，尝试使用 pool.GetMergedCoinPool(ai500Limit=%d)", ai500Limit)
+			log.Printf("🔎 getCandidateCoins: defaultCoins 为空，尝试使用 pool.GetMergedCoinPoolForTrader(ai500Limit=%d)", ai500Limit)
 
-			mergedPool, err := pool.GetMergedCoinPool(ai500Limit)
+			mergedPool, err := pool.GetMergedCoinPoolForTrader(ai500Limit, at.config.ID, at.config.CoinPoolAPIURL, at.config.OITopAPIURL)
 			if err != nil {
-				log.Printf("⚠️ getCandidateCoins: pool.GetMergedCoinPool 失败: %v", err)
+				log.Printf("⚠️ getCandidateCoins: pool.GetMergedCoinPoolForTrader 失败: %v", err)
 				return nil, fmt.Errorf("获取合并币种池失败: %w", err)
 			}
 
@@ -1708,8 +1710,9 @@ func (at *AutoTrader) checkPositionDrawdown() {
 			drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
 		}
 
-		// 检查平仓条件：收益大于5%且回撤超过40%
-		if currentPnLPct > 5.0 && drawdownPct >= 40.0 {
+		// 确保收益回撤比合理（如3:1）
+		// 当前收益8%，回撤超过2.67%就平仓
+		if currentPnLPct > 8.0 && drawdownPct >= (currentPnLPct/3) {
 			log.Printf("🚨 触发回撤平仓条件: %s %s | 当前收益: %.2f%% | 最高收益: %.2f%% | 回撤: %.2f%%",
 				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
 

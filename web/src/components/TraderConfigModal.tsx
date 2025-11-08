@@ -23,8 +23,11 @@ interface TraderConfigData {
   is_cross_margin: boolean
   use_coin_pool: boolean
   use_oi_top: boolean
+  coin_pool_api_url: string
+  oi_top_api_url: string
   initial_balance: number
   scan_interval_minutes: number
+  is_running?: boolean
 }
 
 interface TraderConfigModalProps {
@@ -60,6 +63,8 @@ export function TraderConfigModal({
     is_cross_margin: true,
     use_coin_pool: false,
     use_oi_top: false,
+    coin_pool_api_url: '',
+    oi_top_api_url: '',
     initial_balance: 1000,
     scan_interval_minutes: 3,
   })
@@ -96,8 +101,11 @@ export function TraderConfigModal({
         is_cross_margin: true,
         use_coin_pool: false,
         use_oi_top: false,
+        coin_pool_api_url: '',
+        oi_top_api_url: '',
         initial_balance: 1000,
         scan_interval_minutes: 3,
+        is_running: false,
       })
     }
     // 确保旧数据也有默认的 system_prompt_template
@@ -244,6 +252,8 @@ export function TraderConfigModal({
         is_cross_margin: formData.is_cross_margin,
         use_coin_pool: formData.use_coin_pool,
         use_oi_top: formData.use_oi_top,
+        coin_pool_api_url: formData.coin_pool_api_url,
+        oi_top_api_url: formData.oi_top_api_url,
         initial_balance: formData.initial_balance,
         scan_interval_minutes: formData.scan_interval_minutes,
       }
@@ -578,7 +588,7 @@ export function TraderConfigModal({
             <h3 className="text-lg font-semibold text-[#EAECEF] mb-5 flex items-center gap-2">
               📡 信号源配置
             </h3>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-2 gap-4 mb-4">
               <div className="flex items-center gap-3">
                 <input
                   type="checkbox"
@@ -604,6 +614,37 @@ export function TraderConfigModal({
                 <label className="text-sm text-[#EAECEF]">
                   使用 OI Top 信号
                 </label>
+              </div>
+            </div>
+            {/* API URL配置 */}
+            <div className="grid grid-cols-1 gap-4">
+              <div>
+                <label className="block text-sm text-[#8B949E] mb-2">
+                  Coin Pool API URL
+                </label>
+                <input
+                  type="text"
+                  value={formData.coin_pool_api_url}
+                  onChange={(e) =>
+                    handleInputChange('coin_pool_api_url', e.target.value)
+                  }
+                  placeholder="输入币种池API地址（可选）"
+                  className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-4 py-3 text-[#EAECEF] placeholder-[#8B949E] focus:outline-none focus:border-[#4ADEAA]"
+                />
+              </div>
+              <div>
+                <label className="block text-sm text-[#8B949E] mb-2">
+                  OI Top API URL
+                </label>
+                <input
+                  type="text"
+                  value={formData.oi_top_api_url}
+                  onChange={(e) =>
+                    handleInputChange('oi_top_api_url', e.target.value)
+                  }
+                  placeholder="输入OI Top API地址（可选）"
+                  className="w-full bg-[#0B0E11] border border-[#2B3139] rounded-lg px-4 py-3 text-[#EAECEF] placeholder-[#8B949E] focus:outline-none focus:border-[#4ADEAA]"
+                />
               </div>
             </div>
           </div>

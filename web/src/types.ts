@@ -137,6 +137,8 @@ export interface CreateTraderRequest {
   is_cross_margin?: boolean
   use_coin_pool?: boolean
   use_oi_top?: boolean
+  coin_pool_api_url?: string
+  oi_top_api_url?: string
 }
 
 export interface UpdateModelConfigRequest {
@@ -200,6 +202,8 @@ export interface TraderConfigData {
   is_cross_margin: boolean
   use_coin_pool: boolean
   use_oi_top: boolean
+  coin_pool_api_url: string
+  oi_top_api_url: string
   initial_balance: number
   scan_interval_minutes: number
   is_running: boolean

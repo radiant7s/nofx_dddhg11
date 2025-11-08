@@ -160,15 +160,9 @@ func (tm *TraderManager) LoadTradersFromDatabase(database *config.Database) erro
 			continue
 		}
 
-		// 获取用户信号源配置
-		var coinPoolURL, oiTopURL string
-		if userSignalSource, err := database.GetUserSignalSource(traderCfg.UserID); err == nil {
-			coinPoolURL = userSignalSource.CoinPoolURL
-			oiTopURL = userSignalSource.OITopURL
-		} else {
-			// 如果用户没有配置信号源，使用空字符串
-			log.Printf("🔍 用户 %s 暂未配置信号源", traderCfg.UserID)
-		}
+		// 获取交易员信号源配置（现在每个交易员独立配置）
+		coinPoolURL := traderCfg.CoinPoolAPIURL
+		oiTopURL := traderCfg.OITopAPIURL
 
 		// 添加到TraderManager
 		err = tm.addTraderFromDB(traderCfg, aiModelCfg, exchangeCfg, coinPoolURL, oiTopURL, maxDailyLoss, maxDrawdown, stopTradingMinutes, defaultCoins, database, traderCfg.UserID)
@@ -209,40 +203,27 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		log.Printf("ℹ️ addTraderFromDB: 未指定 tradingSymbols，使用 defaultCoins (%d): %v", len(defaultCoins), defaultCoins)
 	}
 
-	// 根据交易员配置决定是否使用信号源
-	var effectiveCoinPoolURL string
-	if traderCfg.UseCoinPool && coinPoolURL != "" {
-		effectiveCoinPoolURL = coinPoolURL
-		log.Printf("✓ 交易员 %s 启用 COIN POOL 信号源: %s", traderCfg.Name, coinPoolURL)
-	}
-
 	// 如果启用了 Coin Pool，则优先从 Coin Pool / OI Top 拉取并合并候选币种
-	if traderCfg.UseCoinPool && (coinPoolURL != "" || oiTopURL != "") {
-		log.Printf("🔎 addTraderFromDB: 准备从信号源拉取候选币种，coinPoolURL='%s' oiTopURL='%s'", coinPoolURL, oiTopURL)
-		if coinPoolURL != "" {
-			pool.SetCoinPoolAPI(coinPoolURL)
-		}
-		if oiTopURL != "" {
-			pool.SetOITopAPI(oiTopURL)
-		}
+	if traderCfg.UseCoinPool && (traderCfg.CoinPoolAPIURL != "" || traderCfg.OITopAPIURL != "") {
+		log.Printf("🔎 addTraderFromDB: 准备从信号源拉取候选币种，coinPoolURL='%s' oiTopURL='%s'", traderCfg.CoinPoolAPIURL, traderCfg.OITopAPIURL)
 
 		var mergedSymbols []string
-		if coinPoolURL != "" && oiTopURL != "" {
-			merged, err := pool.GetMergedCoinPool(20)
+		if traderCfg.CoinPoolAPIURL != "" && traderCfg.OITopAPIURL != "" {
+			merged, err := pool.GetMergedCoinPoolForTrader(20, traderCfg.ID, traderCfg.CoinPoolAPIURL, traderCfg.OITopAPIURL)
 			if err != nil {
 				log.Printf("⚠️ 获取合并币种池失败: %v", err)
 			} else {
 				mergedSymbols = merged.AllSymbols
 			}
-		} else if coinPoolURL != "" {
-			syms, err := pool.GetTopRatedCoins(20)
+		} else if traderCfg.CoinPoolAPIURL != "" {
+			syms, err := pool.GetTopRatedCoinsForTrader(20, traderCfg.ID, traderCfg.CoinPoolAPIURL)
 			if err != nil {
 				log.Printf("⚠️ 获取Coin Pool前N币种失败: %v", err)
 			} else {
 				mergedSymbols = syms
 			}
-		} else if oiTopURL != "" {
-			syms, err := pool.GetOITopSymbols()
+		} else if traderCfg.OITopAPIURL != "" {
+			syms, err := pool.GetOITopSymbolsForTrader(traderCfg.ID, traderCfg.OITopAPIURL)
 			if err != nil {
 				log.Printf("⚠️ 获取OI Top币种失败: %v", err)
 			} else {
@@ -430,7 +411,7 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 	if len(tradingCoins) > 5 {
 		sample = tradingCoins[:5]
 	}
-	log.Printf("ℹ️ addTraderFromDB: 最终 tradingCoins 数量=%d sample=%v effectiveCoinPoolURL=%s", len(tradingCoins), sample, effectiveCoinPoolURL)
+	log.Printf("ℹ️ addTraderFromDB: 最终 tradingCoins 数量=%d sample=%v", len(tradingCoins), sample)
 
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{
@@ -442,7 +423,8 @@ func (tm *TraderManager) addTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
 		HyperliquidTestnet:    exchangeCfg.Testnet,
-		CoinPoolAPIURL:        effectiveCoinPoolURL,
+		CoinPoolAPIURL:        traderCfg.CoinPoolAPIURL,
+		OITopAPIURL:           traderCfg.OITopAPIURL,
 		UseQwen:               aiModelCfg.Provider == "qwen",
 		DeepSeekKey:           "",
 		QwenKey:               "",
@@ -532,13 +514,6 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		tradingCoins = defaultCoins
 	}
 
-	// 根据交易员配置决定是否使用信号源
-	var effectiveCoinPoolURL string
-	if traderCfg.UseCoinPool && coinPoolURL != "" {
-		effectiveCoinPoolURL = coinPoolURL
-		log.Printf("✓ 交易员 %s 启用 COIN POOL 信号源: %s", traderCfg.Name, coinPoolURL)
-	}
-
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{
 		ID:                    traderCfg.ID,
@@ -549,7 +524,8 @@ func (tm *TraderManager) AddTraderFromDB(traderCfg *config.TraderRecord, aiModel
 		BinanceSecretKey:      "",
 		HyperliquidPrivateKey: "",
 		HyperliquidTestnet:    exchangeCfg.Testnet,
-		CoinPoolAPIURL:        effectiveCoinPoolURL,
+		CoinPoolAPIURL:        traderCfg.CoinPoolAPIURL,
+		OITopAPIURL:           traderCfg.OITopAPIURL,
 		UseQwen:               aiModelCfg.Provider == "qwen",
 		DeepSeekKey:           "",
 		QwenKey:               "",
@@ -1081,13 +1057,6 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 		tradingCoins = defaultCoins
 	}
 
-	// 根据交易员配置决定是否使用信号源
-	var effectiveCoinPoolURL string
-	if traderCfg.UseCoinPool && coinPoolURL != "" {
-		effectiveCoinPoolURL = coinPoolURL
-		log.Printf("✓ 交易员 %s 启用 COIN POOL 信号源: %s", traderCfg.Name, coinPoolURL)
-	}
-
 	// 构建AutoTraderConfig
 	traderConfig := trader.AutoTraderConfig{
 		ID:                   traderCfg.ID,
@@ -1098,7 +1067,8 @@ func (tm *TraderManager) loadSingleTrader(traderCfg *config.TraderRecord, aiMode
 		BTCETHLeverage:       traderCfg.BTCETHLeverage,
 		AltcoinLeverage:      traderCfg.AltcoinLeverage,
 		ScanInterval:         time.Duration(traderCfg.ScanIntervalMinutes) * time.Minute,
-		CoinPoolAPIURL:       effectiveCoinPoolURL,
+		CoinPoolAPIURL:       traderCfg.CoinPoolAPIURL,
+		OITopAPIURL:          traderCfg.OITopAPIURL,
 		CustomAPIURL:         aiModelCfg.CustomAPIURL,    // 自定义API URL
 		CustomModelName:      aiModelCfg.CustomModelName, // 自定义模型名称
 		UseQwen:              aiModelCfg.Provider == "qwen",

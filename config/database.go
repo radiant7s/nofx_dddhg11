@@ -104,6 +104,8 @@ func (d *Database) createTables() error {
 			trading_symbols TEXT DEFAULT '',
 			use_coin_pool BOOLEAN DEFAULT 0,
 			use_oi_top BOOLEAN DEFAULT 0,
+			coin_pool_api_url TEXT DEFAULT '',
+			oi_top_api_url TEXT DEFAULT '',
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
@@ -213,6 +215,8 @@ func (d *Database) createTables() error {
 		`ALTER TABLE traders ADD COLUMN trading_symbols TEXT DEFAULT ''`,               // 交易币种，逗号分隔
 		`ALTER TABLE traders ADD COLUMN use_coin_pool BOOLEAN DEFAULT 0`,               // 是否使用COIN POOL信号源
 		`ALTER TABLE traders ADD COLUMN use_oi_top BOOLEAN DEFAULT 0`,                  // 是否使用OI TOP信号源
+		`ALTER TABLE traders ADD COLUMN coin_pool_api_url TEXT DEFAULT ''`,             // 币种池API URL
+		`ALTER TABLE traders ADD COLUMN oi_top_api_url TEXT DEFAULT ''`,                // OI Top API URL
 		`ALTER TABLE traders ADD COLUMN system_prompt_template TEXT DEFAULT 'default'`, // 系统提示词模板名称
 		`ALTER TABLE ai_models ADD COLUMN custom_api_url TEXT DEFAULT ''`,              // 自定义API地址
 		`ALTER TABLE ai_models ADD COLUMN custom_model_name TEXT DEFAULT ''`,           // 自定义模型名称
@@ -621,6 +625,8 @@ type TraderRecord struct {
 	TradingSymbols       string    `json:"trading_symbols"`        // 交易币种，逗号分隔
 	UseCoinPool          bool      `json:"use_coin_pool"`          // 是否使用COIN POOL信号源
 	UseOITop             bool      `json:"use_oi_top"`             // 是否使用OI TOP信号源
+	CoinPoolAPIURL       string    `json:"coin_pool_api_url"`      // 币种池API URL
+	OITopAPIURL          string    `json:"oi_top_api_url"`         // OI Top API URL
 	CustomPrompt         string    `json:"custom_prompt"`          // 自定义交易策略prompt
 	OverrideBasePrompt   bool      `json:"override_base_prompt"`   // 是否覆盖基础prompt
 	SystemPromptTemplate string    `json:"system_prompt_template"` // 系统提示词模板名称
@@ -986,9 +992,9 @@ func (d *Database) CreateExchange(userID, id, name, typ string, enabled bool, ap
 // CreateTrader 创建交易员
 func (d *Database) CreateTrader(trader *TraderRecord) error {
 	_, err := d.db.Exec(`
-		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
+		INSERT INTO traders (id, user_id, name, ai_model_id, exchange_id, initial_balance, scan_interval_minutes, is_running, btc_eth_leverage, altcoin_leverage, trading_symbols, use_coin_pool, use_oi_top, coin_pool_api_url, oi_top_api_url, custom_prompt, override_base_prompt, system_prompt_template, is_cross_margin)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, trader.ID, trader.UserID, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance, trader.ScanIntervalMinutes, trader.IsRunning, trader.BTCETHLeverage, trader.AltcoinLeverage, trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop, trader.CoinPoolAPIURL, trader.OITopAPIURL, trader.CustomPrompt, trader.OverrideBasePrompt, trader.SystemPromptTemplate, trader.IsCrossMargin)
 	return err
 }
 
@@ -999,6 +1005,7 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 		       COALESCE(btc_eth_leverage, 5) as btc_eth_leverage, COALESCE(altcoin_leverage, 5) as altcoin_leverage,
 		       COALESCE(trading_symbols, '') as trading_symbols,
 		       COALESCE(use_coin_pool, 0) as use_coin_pool, COALESCE(use_oi_top, 0) as use_oi_top,
+		       COALESCE(coin_pool_api_url, '') as coin_pool_api_url, COALESCE(oi_top_api_url, '') as oi_top_api_url,
 		       COALESCE(custom_prompt, '') as custom_prompt, COALESCE(override_base_prompt, 0) as override_base_prompt,
 		       COALESCE(system_prompt_template, 'default') as system_prompt_template,
 		       COALESCE(is_cross_margin, 1) as is_cross_margin, created_at, updated_at
@@ -1017,6 +1024,7 @@ func (d *Database) GetTraders(userID string) ([]*TraderRecord, error) {
 			&trader.InitialBalance, &trader.ScanIntervalMinutes, &trader.IsRunning,
 			&trader.BTCETHLeverage, &trader.AltcoinLeverage, &trader.TradingSymbols,
 			&trader.UseCoinPool, &trader.UseOITop,
+			&trader.CoinPoolAPIURL, &trader.OITopAPIURL,
 			&trader.CustomPrompt, &trader.OverrideBasePrompt, &trader.SystemPromptTemplate,
 			&trader.IsCrossMargin,
 			&trader.CreatedAt, &trader.UpdatedAt,
@@ -1042,12 +1050,14 @@ func (d *Database) UpdateTrader(trader *TraderRecord) error {
 		UPDATE traders SET
 			name = ?, ai_model_id = ?, exchange_id = ?, initial_balance = ?,
 			scan_interval_minutes = ?, btc_eth_leverage = ?, altcoin_leverage = ?,
-			trading_symbols = ?, custom_prompt = ?, override_base_prompt = ?,
+			trading_symbols = ?, use_coin_pool = ?, use_oi_top = ?,
+			coin_pool_api_url = ?, oi_top_api_url = ?, custom_prompt = ?, override_base_prompt = ?,
 			system_prompt_template = ?, is_cross_margin = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ? AND user_id = ?
 	`, trader.Name, trader.AIModelID, trader.ExchangeID, trader.InitialBalance,
 		trader.ScanIntervalMinutes, trader.BTCETHLeverage, trader.AltcoinLeverage,
-		trader.TradingSymbols, trader.CustomPrompt, trader.OverrideBasePrompt,
+		trader.TradingSymbols, trader.UseCoinPool, trader.UseOITop,
+		trader.CoinPoolAPIURL, trader.OITopAPIURL, trader.CustomPrompt, trader.OverrideBasePrompt,
 		trader.SystemPromptTemplate, trader.IsCrossMargin, trader.ID, trader.UserID)
 	return err
 }

@@ -193,6 +193,20 @@ export function TraderConfigViewModal({
                 value={traderData.use_coin_pool}
               />
               <InfoRow label="OI Top 信号" value={traderData.use_oi_top} />
+              {traderData.coin_pool_api_url && (
+                <InfoRow
+                  label="Coin Pool API URL"
+                  value={traderData.coin_pool_api_url}
+                  copyable
+                />
+              )}
+              {traderData.oi_top_api_url && (
+                <InfoRow
+                  label="OI Top API URL"
+                  value={traderData.oi_top_api_url}
+                  copyable
+                />
+              )}
             </div>
           </div>
 

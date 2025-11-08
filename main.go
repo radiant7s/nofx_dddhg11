@@ -78,8 +78,6 @@ func syncConfigToDatabase(database *config.Database, configFile *ConfigFile) err
 		"beta_mode":            fmt.Sprintf("%t", configFile.BetaMode),
 		"api_server_port":      strconv.Itoa(configFile.APIServerPort),
 		"use_default_coins":    fmt.Sprintf("%t", configFile.UseDefaultCoins),
-		"coin_pool_api_url":    configFile.CoinPoolAPIURL,
-		"oi_top_api_url":       configFile.OITopAPIURL,
 		"max_daily_loss":       fmt.Sprintf("%.1f", configFile.MaxDailyLoss),
 		"max_drawdown":         fmt.Sprintf("%.1f", configFile.MaxDrawdown),
 		"stop_trading_minutes": strconv.Itoa(configFile.StopTradingMinutes),
@@ -245,18 +243,8 @@ func main() {
 		log.Printf("✓ 已启用默认主流币种列表")
 	}
 
-	// 设置币种池API URL
-	coinPoolAPIURL, _ := database.GetSystemConfig("coin_pool_api_url")
-	if coinPoolAPIURL != "" {
-		pool.SetCoinPoolAPI(coinPoolAPIURL)
-		log.Printf("✓ 已配置AI500币种池API")
-	}
-
-	oiTopAPIURL, _ := database.GetSystemConfig("oi_top_api_url")
-	if oiTopAPIURL != "" {
-		pool.SetOITopAPI(oiTopAPIURL)
-		log.Printf("✓ 已配置OI Top API")
-	}
+	// 注意：币种池API URL和OI Top API URL现在由每个交易员独立配置
+	// 不再使用全局配置
 
 	// 创建TraderManager
 	traderManager := manager.NewTraderManager()

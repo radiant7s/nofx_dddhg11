@@ -93,14 +93,25 @@ func SetDefaultCoins(coins []string) {
 
 // GetCoinPool 获取币种池列表（带重试和缓存机制）
 func GetCoinPool() ([]CoinInfo, error) {
+	return GetCoinPoolForTrader("", "")
+}
+
+// GetCoinPoolForTrader 为特定交易员获取币种池列表
+func GetCoinPoolForTrader(traderID, traderAPIURL string) ([]CoinInfo, error) {
 	// 优先检查是否启用默认币种列表
 	if coinPoolConfig.UseDefaultCoins {
 		log.Printf("✓ 已启用默认主流币种列表")
 		return convertSymbolsToCoins(defaultMainstreamCoins), nil
 	}
 
+	// 选择API URL：优先使用交易员特定的URL，否则使用全局配置
+	apiURL := traderAPIURL
+	if strings.TrimSpace(apiURL) == "" {
+		apiURL = coinPoolConfig.APIURL
+	}
+
 	// 检查API URL是否配置
-	if strings.TrimSpace(coinPoolConfig.APIURL) == "" {
+	if strings.TrimSpace(apiURL) == "" {
 		log.Printf("⚠️  未配置币种池API URL，使用默认主流币种列表")
 		return convertSymbolsToCoins(defaultMainstreamCoins), nil
 	}
@@ -115,7 +126,7 @@ func GetCoinPool() ([]CoinInfo, error) {
 			time.Sleep(2 * time.Second) // 重试前等待2秒
 		}
 
-		coins, err := fetchCoinPool()
+		coins, err := fetchCoinPoolFromURL(apiURL)
 		if err == nil {
 			if attempt > 1 {
 				log.Printf("✓ 第%d次重试成功", attempt)
@@ -146,13 +157,18 @@ func GetCoinPool() ([]CoinInfo, error) {
 
 // fetchCoinPool 实际执行币种池请求
 func fetchCoinPool() ([]CoinInfo, error) {
-	log.Printf("🔄 正在请求AI500币种池...")
+	return fetchCoinPoolFromURL(coinPoolConfig.APIURL)
+}
+
+// fetchCoinPoolFromURL 从指定URL获取币种池数据
+func fetchCoinPoolFromURL(apiURL string) ([]CoinInfo, error) {
+	log.Printf("🔄 正在请求AI500币种池: %s", apiURL)
 
 	client := &http.Client{
 		Timeout: coinPoolConfig.Timeout,
 	}
 
-	resp, err := client.Get(coinPoolConfig.APIURL)
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("请求币种池API失败: %w", err)
 	}
@@ -252,7 +268,12 @@ func loadCoinPoolCache() ([]CoinInfo, error) {
 
 // GetAvailableCoins 获取可用的币种列表（过滤不可用的）
 func GetAvailableCoins() ([]string, error) {
-	coins, err := GetCoinPool()
+	return GetAvailableCoinsForTrader("", "")
+}
+
+// GetAvailableCoinsForTrader 为特定交易员获取可用的币种列表
+func GetAvailableCoinsForTrader(traderID, traderAPIURL string) ([]string, error) {
+	coins, err := GetCoinPoolForTrader(traderID, traderAPIURL)
 	if err != nil {
 		return nil, err
 	}
@@ -275,7 +296,12 @@ func GetAvailableCoins() ([]string, error) {
 
 // GetTopRatedCoins 获取评分最高的N个币种（按评分从大到小排序）
 func GetTopRatedCoins(limit int) ([]string, error) {
-	coins, err := GetCoinPool()
+	return GetTopRatedCoinsForTrader(limit, "", "")
+}
+
+// GetTopRatedCoinsForTrader 为特定交易员获取评分最高的N个币种
+func GetTopRatedCoinsForTrader(limit int, traderID, traderAPIURL string) ([]string, error) {
+	coins, err := GetCoinPoolForTrader(traderID, traderAPIURL)
 	if err != nil {
 		return nil, err
 	}
@@ -420,8 +446,19 @@ var oiTopConfig = struct {
 
 // GetOITopPositions 获取持仓量增长Top20数据（带重试和缓存）
 func GetOITopPositions() ([]OIPosition, error) {
+	return GetOITopPositionsForTrader("", "")
+}
+
+// GetOITopPositionsForTrader 为特定交易员获取持仓量增长Top20数据
+func GetOITopPositionsForTrader(traderID, traderAPIURL string) ([]OIPosition, error) {
+	// 选择API URL：优先使用交易员特定的URL，否则使用全局配置
+	apiURL := traderAPIURL
+	if strings.TrimSpace(apiURL) == "" {
+		apiURL = oiTopConfig.APIURL
+	}
+
 	// 检查API URL是否配置
-	if strings.TrimSpace(oiTopConfig.APIURL) == "" {
+	if strings.TrimSpace(apiURL) == "" {
 		log.Printf("⚠️  未配置OI Top API URL，跳过OI Top数据获取")
 		return []OIPosition{}, nil // 返回空列表，不是错误
 	}
@@ -436,7 +473,7 @@ func GetOITopPositions() ([]OIPosition, error) {
 			time.Sleep(2 * time.Second)
 		}
 
-		positions, err := fetchOITop()
+		positions, err := fetchOITopFromURL(apiURL)
 		if err == nil {
 			if attempt > 1 {
 				log.Printf("✓ 第%d次重试成功", attempt)
@@ -467,13 +504,18 @@ func GetOITopPositions() ([]OIPosition, error) {
 
 // fetchOITop 实际执行OI Top请求
 func fetchOITop() ([]OIPosition, error) {
-	log.Printf("🔄 正在请求OI Top数据...")
+	return fetchOITopFromURL(oiTopConfig.APIURL)
+}
+
+// fetchOITopFromURL 从指定URL获取OI Top数据
+func fetchOITopFromURL(apiURL string) ([]OIPosition, error) {
+	log.Printf("🔄 正在请求OI Top数据: %s", apiURL)
 
 	client := &http.Client{
 		Timeout: oiTopConfig.Timeout,
 	}
 
-	resp, err := client.Get(oiTopConfig.APIURL)
+	resp, err := client.Get(apiURL)
 	if err != nil {
 		return nil, fmt.Errorf("请求OI Top API失败: %w", err)
 	}
@@ -565,7 +607,12 @@ func loadOITopCache() ([]OIPosition, error) {
 
 // GetOITopSymbols 获取OI Top的币种符号列表
 func GetOITopSymbols() ([]string, error) {
-	positions, err := GetOITopPositions()
+	return GetOITopSymbolsForTrader("", "")
+}
+
+// GetOITopSymbolsForTrader 为特定交易员获取OI Top的币种符号列表
+func GetOITopSymbolsForTrader(traderID, traderAPIURL string) ([]string, error) {
+	positions, err := GetOITopPositionsForTrader(traderID, traderAPIURL)
 	if err != nil {
 		return nil, err
 	}
@@ -589,15 +636,20 @@ type MergedCoinPool struct {
 
 // GetMergedCoinPool 获取合并后的币种池（AI500 + OI Top，去重）
 func GetMergedCoinPool(ai500Limit int) (*MergedCoinPool, error) {
+	return GetMergedCoinPoolForTrader(ai500Limit, "", "", "")
+}
+
+// GetMergedCoinPoolForTrader 为特定交易员获取合并后的币种池
+func GetMergedCoinPoolForTrader(ai500Limit int, traderID, coinPoolAPIURL, oiTopAPIURL string) (*MergedCoinPool, error) {
 	// 1. 获取AI500数据
-	ai500TopSymbols, err := GetTopRatedCoins(ai500Limit)
+	ai500TopSymbols, err := GetTopRatedCoinsForTrader(ai500Limit, traderID, coinPoolAPIURL)
 	if err != nil {
 		log.Printf("⚠️  获取AI500数据失败: %v", err)
 		ai500TopSymbols = []string{} // 失败时用空列表
 	}
 
 	// 2. 获取OI Top数据
-	oiTopSymbols, err := GetOITopSymbols()
+	oiTopSymbols, err := GetOITopSymbolsForTrader(traderID, oiTopAPIURL)
 	if err != nil {
 		log.Printf("⚠️  获取OI Top数据失败: %v", err)
 		oiTopSymbols = []string{} // 失败时用空列表
@@ -628,8 +680,8 @@ func GetMergedCoinPool(ai500Limit int) (*MergedCoinPool, error) {
 	}
 
 	// 获取完整数据
-	ai500Coins, _ := GetCoinPool()
-	oiTopPositions, _ := GetOITopPositions()
+	ai500Coins, _ := GetCoinPoolForTrader(traderID, coinPoolAPIURL)
+	oiTopPositions, _ := GetOITopPositionsForTrader(traderID, oiTopAPIURL)
 
 	merged := &MergedCoinPool{
 		AI500Coins:    ai500Coins,
