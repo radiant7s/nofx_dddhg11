@@ -1621,14 +1621,14 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 
 		// 构建用于自定义列表的API URL，增加limit参数以获取更多币种
 		customAPIURL := at.config.CoinPoolAPIURL
-		if strings.Contains(customAPIURL, "limit=") {
-			// 替换现有的limit参数为更大的值
-			customAPIURL = strings.ReplaceAll(customAPIURL, "limit=10", "limit=500")
-		} else if strings.Contains(customAPIURL, "?") {
-			customAPIURL += "&limit=500"
-		} else {
-			customAPIURL += "?limit=500"
-		}
+		// if strings.Contains(customAPIURL, "limit=") {
+		// 	// 替换现有的limit参数为更大的值
+		// 	customAPIURL = strings.ReplaceAll(customAPIURL, "limit=10", "limit=500")
+		// } else if strings.Contains(customAPIURL, "?") {
+		// 	customAPIURL += "&limit=500"
+		// } else {
+		// 	customAPIURL += "?limit=500"
+		// }
 
 		if coinPool, err := pool.GetCoinPoolForTrader(at.config.ID, customAPIURL); err == nil {
 			coinInfoMap = make(map[string]pool.CoinInfo)
