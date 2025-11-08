@@ -1709,11 +1709,18 @@ func (at *AutoTrader) checkPositionDrawdown() {
 		if peakPnLPct > 0 && currentPnLPct < peakPnLPct {
 			drawdownPct = ((peakPnLPct - currentPnLPct) / peakPnLPct) * 100
 		}
+		// 不同收益水平的2.5:1
+		// 回撤阈值-当前收益-回撤阈值-平仓时剩余收益
+		// 5%-2.0%-3.0%
+		// 10%-4.0%-6.0%
+		// 15%-6.0%-9.0%
+		// 20%-8.0%-12.0%
+		// 30%-12.0%-18.0%
+		// 40%-16.0%-24.0%
 
-		// 确保收益回撤比合理（如3:1）
-		// 当前收益8%，回撤超过2.67%就平仓
-
-		if currentPnLPct > 8.0 && drawdownPct >= (currentPnLPct/3) {
+		// 确保收益回撤比合理（如2.5:1）
+		// 当前收益20%，回撤超过8%就平仓
+		if currentPnLPct > 20 && drawdownPct >= (currentPnLPct/2.5) {
 			log.Printf("🚨 触发回撤平仓条件: %s %s | 当前收益: %.2f%% | 最高收益: %.2f%% | 回撤: %.2f%%",
 				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
 
