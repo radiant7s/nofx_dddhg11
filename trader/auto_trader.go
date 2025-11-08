@@ -1278,6 +1278,16 @@ func (at *AutoTrader) executePartialCloseWithRecord(decision *decision.Decision,
 	closeQuantity := totalQuantity * (decision.ClosePercentage / 100.0)
 	actionRecord.Quantity = closeQuantity
 
+	// 获取当前平仓价值
+	markPrice := marketData.CurrentPrice
+	positionValue := totalQuantity * markPrice
+
+	// 在执行部分平仓之前检查仓位价值
+	if positionValue < 10.0 {
+		log.Printf("⚠ 仓位价值 %.2f USDT 小于 10 USDT，无法执行部分平仓: %s", positionValue, decision.Symbol)
+		return fmt.Errorf("仓位价值小于10 USDT，无法执行部分平仓")
+	}
+
 	// 执行平仓
 	var order map[string]interface{}
 	if positionSide == "LONG" {
