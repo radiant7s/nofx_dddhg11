@@ -362,8 +362,8 @@ type CreateTraderRequest struct {
 	IsCrossMargin        *bool   `json:"is_cross_margin"`        // 指针类型，nil表示使用默认值true
 	UseCoinPool          bool    `json:"use_coin_pool"`
 	UseOITop             bool    `json:"use_oi_top"`
-	CoinPoolAPIURL       string  `json:"coin_pool_api_url"`      // 币种池API URL
-	OITopAPIURL          string  `json:"oi_top_api_url"`         // OI Top API URL
+	CoinPoolAPIURL       string  `json:"coin_pool_api_url"` // 币种池API URL
+	OITopAPIURL          string  `json:"oi_top_api_url"`    // OI Top API URL
 }
 
 type ModelConfig struct {
@@ -613,8 +613,8 @@ type UpdateTraderRequest struct {
 	IsCrossMargin       *bool   `json:"is_cross_margin"`
 	UseCoinPool         bool    `json:"use_coin_pool"`
 	UseOITop            bool    `json:"use_oi_top"`
-	CoinPoolAPIURL      string  `json:"coin_pool_api_url"`      // 币种池API URL
-	OITopAPIURL         string  `json:"oi_top_api_url"`         // OI Top API URL
+	CoinPoolAPIURL      string  `json:"coin_pool_api_url"` // 币种池API URL
+	OITopAPIURL         string  `json:"oi_top_api_url"`    // OI Top API URL
 }
 
 // handleUpdateTrader 更新交易员配置

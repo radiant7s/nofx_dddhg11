@@ -220,7 +220,7 @@ func (d *Database) createTables() error {
 		`ALTER TABLE traders ADD COLUMN system_prompt_template TEXT DEFAULT 'default'`, // 系统提示词模板名称
 		`ALTER TABLE ai_models ADD COLUMN custom_api_url TEXT DEFAULT ''`,              // 自定义API地址
 		`ALTER TABLE ai_models ADD COLUMN custom_model_name TEXT DEFAULT ''`,           // 自定义模型名称
-	// 精简：position_meta 列在建表时已完整，不再重复 ALTER（保持其他表的向后兼容）
+		// 精简：position_meta 列在建表时已完整，不再重复 ALTER（保持其他表的向后兼容）
 	}
 
 	for _, query := range alterQueries {
