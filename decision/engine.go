@@ -670,7 +670,7 @@ func validateDecisions(decisions []Decision, accountEquity float64, btcEthLevera
 	for i := range decisions {
 		d := &decisions[i]
 
-		// 仅对开仓操作进行限幅处理
+		// 仅对开仓操作进行限幅处理 5x特化
 		if d.Action == "open_long" || d.Action == "open_short" {
 			maxPositionValue := accountEquity * 0.5 // 山寨币上限（调整为0.5x账户净值）
 			if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
