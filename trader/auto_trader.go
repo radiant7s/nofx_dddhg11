@@ -1605,16 +1605,38 @@ func (at *AutoTrader) getCandidateCoins() ([]decision.CandidateCoin, error) {
 			return candidateCoins, nil
 		}
 	} else {
-		// 使用自定义币种列表
+		// 使用自定义币种列表，但仍尝试获取最新的市场数据
 		var candidateCoins []decision.CandidateCoin
 		log.Printf("🔎 getCandidateCoins: 使用自定义 tradingCoins (%d): %v", len(at.tradingCoins), at.tradingCoins)
+
+		// 尝试从币种池API获取最新数据，以便获取评分、价格等信息
+		var coinInfoMap map[string]pool.CoinInfo
+		if coinPool, err := pool.GetCoinPoolForTrader(at.config.ID, at.config.CoinPoolAPIURL); err == nil {
+			coinInfoMap = make(map[string]pool.CoinInfo)
+			for _, coin := range coinPool {
+				coinInfoMap[normalizeSymbol(coin.Pair)] = coin
+			}
+			log.Printf("📊 [%s] 已获取最新币种池数据用于自定义列表（共%d个币种）", at.name, len(coinPool))
+		} else {
+			log.Printf("⚠️ [%s] 无法获取最新币种池数据，将使用自定义列表但缺少实时信息: %v", at.name, err)
+		}
+
 		for _, coin := range at.tradingCoins {
 			// 确保币种格式正确（转为大写USDT交易对）
 			symbol := normalizeSymbol(coin)
-			candidateCoins = append(candidateCoins, decision.CandidateCoin{
+			candidateCoin := decision.CandidateCoin{
 				Symbol:  symbol,
 				Sources: []string{"custom"}, // 标记为自定义来源
-			})
+			}
+
+			// 如果能从币种池获取到该币种的信息，则添加额外信息
+			if coinInfo, exists := coinInfoMap[symbol]; exists {
+				// 可以在这里添加评分、价格等信息到 candidateCoin
+				// 注意：这需要 decision.CandidateCoin 结构支持这些字段
+				log.Printf("📈 [%s] 自定义币种 %s 获取到最新数据: 评分=%.2f", at.name, symbol, coinInfo.Score)
+			}
+
+			candidateCoins = append(candidateCoins, candidateCoin)
 		}
 
 		log.Printf("� getCandidateCoins: 返回 %d 个候选币种 (来源: custom)", len(candidateCoins))
