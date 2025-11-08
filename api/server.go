@@ -416,6 +416,9 @@ func (s *Server) handleCreateTrader(c *gin.Context) {
 		return
 	}
 
+	// 调试日志：确认前端是否正确传入 CoinPool / OI Top 字段
+	log.Printf("🧪 handleCreateTrader 输入检查: use_coin_pool=%v use_oi_top=%v coin_pool_api_url='%s' oi_top_api_url='%s'", req.UseCoinPool, req.UseOITop, req.CoinPoolAPIURL, req.OITopAPIURL)
+
 	// 校验杠杆值
 	if req.BTCETHLeverage < 0 || req.BTCETHLeverage > 50 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "BTC/ETH杠杆必须在1-50倍之间"})
@@ -627,6 +630,9 @@ func (s *Server) handleUpdateTrader(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 调试日志：确认前端是否正确传入更新字段
+	log.Printf("🧪 handleUpdateTrader 输入检查: trader_id=%s use_coin_pool=%v use_oi_top=%v coin_pool_api_url='%s' oi_top_api_url='%s'", traderID, req.UseCoinPool, req.UseOITop, req.CoinPoolAPIURL, req.OITopAPIURL)
 
 	// 检查交易员是否存在且属于当前用户
 	traders, err := s.database.GetTraders(userID)
