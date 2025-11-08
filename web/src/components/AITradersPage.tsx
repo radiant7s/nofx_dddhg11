@@ -26,7 +26,7 @@ import {
   HelpCircle,
 } from 'lucide-react'
 
-// 获取友好的AI模型名称
+// 函数说明：根据模型ID返回友好的展示名称（用于列表标签和徽标显示）
 function getModelDisplayName(modelId: string): string {
   switch (modelId.toLowerCase()) {
     case 'deepseek':
@@ -40,7 +40,7 @@ function getModelDisplayName(modelId: string): string {
   }
 }
 
-// 提取下划线后面的名称部分
+// 函数说明：提取字符串下划线后的短名称（如 provider_model -> model），用于更简洁的UI显示
 function getShortName(fullName: string): string {
   const parts = fullName.split('_')
   return parts.length > 1 ? parts[parts.length - 1] : fullName
@@ -50,6 +50,11 @@ interface AITradersPageProps {
   onTraderSelect?: (traderId: string) => void
 }
 
+// 页面组件：AI交易员管理页
+// 职责：
+// 1) 加载并展示用户的模型/交易所配置与交易员列表
+// 2) 提供创建/编辑/删除/启动/停止交易员的操作
+// 3) 管理用户级信号源（Coin Pool / OI Top）配置入口
 export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
   const { language } = useLanguage()
   const { user, token } = useAuth()
@@ -167,12 +172,12 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
       )
     }) || []
 
-  // 检查模型是否正在被运行中的交易员使用
+  // 函数说明：检查某个AI模型是否正被运行中的交易员使用（使用中不可编辑）
   const isModelInUse = (modelId: string) => {
     return traders?.some((t) => t.ai_model === modelId && t.is_running) || false
   }
 
-  // 检查交易所是否正在被运行中的交易员使用
+  // 函数说明：检查某个交易所是否正被运行中的交易员使用（使用中不可编辑）
   const isExchangeInUse = (exchangeId: string) => {
     return (
       traders?.some((t) => t.exchange_id === exchangeId && t.is_running) ||
@@ -180,6 +185,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     )
   }
 
+  // 函数说明：创建交易员。校验模型/交易所启用状态后提交后端，成功则关闭弹窗并刷新列表
   const handleCreateTrader = async (data: CreateTraderRequest) => {
     try {
       const model = allModels?.find((m) => m.id === data.ai_model_id)
@@ -204,6 +210,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：进入编辑交易员流程。拉取完整配置并打开编辑弹窗
   const handleEditTrader = async (traderId: string) => {
     try {
       const traderConfig = await api.getTraderConfig(traderId)
@@ -215,6 +222,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：保存编辑后的交易员配置。构建请求体并调用更新接口
   const handleSaveEditTrader = async (data: CreateTraderRequest) => {
     if (!editingTrader) return
 
@@ -246,6 +254,9 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
         is_cross_margin: data.is_cross_margin,
         use_coin_pool: data.use_coin_pool,
         use_oi_top: data.use_oi_top,
+          // 补充信号源URL字段，避免编辑时未传递
+          coin_pool_api_url: data.coin_pool_api_url,
+          oi_top_api_url: data.oi_top_api_url,
       }
 
       await api.updateTrader(editingTrader.trader_id, request)
@@ -258,6 +269,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：删除指定交易员。操作前弹出确认，成功后刷新列表
   const handleDeleteTrader = async (traderId: string) => {
     if (!confirm(t('confirmDeleteTrader', language))) return
 
@@ -270,6 +282,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：启动/停止指定交易员。根据当前运行状态调用对应后端接口
   const handleToggleTrader = async (traderId: string, running: boolean) => {
     try {
       if (running) {
@@ -284,6 +297,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：点击模型卡片，若该模型未被运行中的交易员占用，则打开模型配置弹窗
   const handleModelClick = (modelId: string) => {
     if (!isModelInUse(modelId)) {
       setEditingModel(modelId)
@@ -291,6 +305,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：点击交易所卡片，若该交易所未被运行中的交易员占用，则打开交易所配置弹窗
   const handleExchangeClick = (exchangeId: string) => {
     if (!isExchangeInUse(exchangeId)) {
       setEditingExchange(exchangeId)
@@ -298,6 +313,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：删除模型配置。构造更新后的配置集合提交后端，并同步本地状态
   const handleDeleteModelConfig = async (modelId: string) => {
     if (!confirm(t('confirmDeleteModel', language))) return
 
@@ -339,6 +355,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：新增或更新模型配置。支持设置 API Key / 自定义 BaseURL / 自定义模型名
   const handleSaveModelConfig = async (
     modelId: string,
     apiKey: string,
@@ -412,6 +429,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：删除交易所配置。提交后端并同步本地状态
   const handleDeleteExchangeConfig = async (exchangeId: string) => {
     if (!confirm(t('confirmDeleteExchange', language))) return
 
@@ -447,6 +465,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：新增或更新交易所配置。按交易所类型展示与校验不同字段，并提交保存
   const handleSaveExchangeConfig = async (
     exchangeId: string,
     apiKey: string,
@@ -537,16 +556,19 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
     }
   }
 
+  // 函数说明：打开“新增模型配置”弹窗
   const handleAddModel = () => {
     setEditingModel(null)
     setShowModelModal(true)
   }
 
+  // 函数说明：打开“新增交易所配置”弹窗
   const handleAddExchange = () => {
     setEditingExchange(null)
     setShowExchangeModal(true)
   }
 
+  // 函数说明：保存用户级信号源配置（Coin Pool / OI Top），成功后更新页面状态
   const handleSaveSignalSource = async (
     coinPoolUrl: string,
     oiTopUrl: string
@@ -1114,6 +1136,7 @@ export function AITradersPage({ onTraderSelect }: AITradersPageProps) {
 }
 
 // Tooltip Helper Component
+// 组件说明：气泡提示组件。用于在表单/图标附近展示简短说明
 function Tooltip({
   content,
   children,
@@ -1159,6 +1182,7 @@ function Tooltip({
 }
 
 // Signal Source Configuration Modal Component
+// 组件说明：用户级信号源配置弹窗（Coin Pool / OI Top）。负责表单输入与保存提交
 function SignalSourceModal({
   coinPoolUrl,
   oiTopUrl,
@@ -1283,6 +1307,7 @@ function SignalSourceModal({
 }
 
 // Model Configuration Modal Component
+// 组件说明：AI 模型配置弹窗。支持添加/编辑模型配置，包含API Key与可选自定义参数
 function ModelConfigModal({
   allModels,
   configuredModels,
@@ -1554,6 +1579,7 @@ function ModelConfigModal({
 }
 
 // Exchange Configuration Modal Component
+// 组件说明：交易所配置弹窗。根据交易所（Binance/OKX/Hyperliquid/Aster等）展示不同字段与校验
 function ExchangeConfigModal({
   allExchanges,
   editingExchangeId,
