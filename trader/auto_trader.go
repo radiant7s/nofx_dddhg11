@@ -1712,6 +1712,7 @@ func (at *AutoTrader) checkPositionDrawdown() {
 
 		// 确保收益回撤比合理（如3:1）
 		// 当前收益8%，回撤超过2.67%就平仓
+
 		if currentPnLPct > 8.0 && drawdownPct >= (currentPnLPct/3) {
 			log.Printf("🚨 触发回撤平仓条件: %s %s | 当前收益: %.2f%% | 最高收益: %.2f%% | 回撤: %.2f%%",
 				symbol, side, currentPnLPct, peakPnLPct, drawdownPct)
