@@ -312,13 +312,13 @@ func buildSystemPrompt(accountEquity float64, btcEthLeverage, altcoinLeverage in
 	sb.WriteString("1. 风险回报比: 必须 ≥ 1:3（冒1%风险，赚3%+收益）\n")
 	sb.WriteString("2. 最多持仓: 3个币种（质量>数量）\n")
 	sb.WriteString(fmt.Sprintf("3. 单币仓位: 山寨%.0f-%.0f U | BTC/ETH %.0f-%.0f U\n",
-		accountEquity*0.8, accountEquity*5, accountEquity*5, accountEquity*10))
+		accountEquity*0.8, accountEquity*3, accountEquity*5, accountEquity*10))
 	sb.WriteString(fmt.Sprintf("4. 杠杆限制: **山寨币最大%dx杠杆** | **BTC/ETH最大%dx杠杆** (⚠️ 严格执行，不可超过)\n", altcoinLeverage, btcEthLeverage))
 	sb.WriteString("5. 保证金: 总使用率 ≤ 90%\n")
 	
 	// 🔧 根据账户规模动态调整开仓金额建议
 	if accountEquity < 100 {
-		sb.WriteString("6. 开仓金额: **小资金账户特殊规则** - BTC/ETH建议 **≥25 USDT** | 山寨建议 **≥12 USDT** (优先选择价格较低的币种)\n\n")
+		sb.WriteString("6. 开仓金额: BTC/ETH建议 **≥35 USDT** | 山寨建议 **≥15 USDT** (交易所最小名义价值要求) \n\n")
 	} else if accountEquity < 500 {
 		sb.WriteString("6. 开仓金额: BTC/ETH建议 **≥35 USDT** | 山寨建议 **≥15 USDT** (交易所最小名义价值要求)\n\n")
 	} else {
@@ -714,7 +714,7 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 	if d.Action == "open_long" || d.Action == "open_short" {
 		// 根据币种使用配置的杠杆上限
 	maxLeverage := altcoinLeverage          // 山寨币使用配置的杠杆
-	maxPositionValue := accountEquity * 5.0 // 山寨币最多5倍账户净值
+	maxPositionValue := accountEquity * 3.0 // 山寨币最多3倍账户净值
 		if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
 			maxLeverage = btcEthLeverage          // BTC和ETH使用配置的杠杆
 			maxPositionValue = accountEquity * 10 // BTC/ETH最多10倍账户净值
@@ -761,7 +761,7 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 			if d.Symbol == "BTCUSDT" || d.Symbol == "ETHUSDT" {
 				return fmt.Errorf("BTC/ETH单币种仓位价值不能超过%.0f USDT（10倍账户净值），实际: %.0f", maxPositionValue, d.PositionSizeUSD)
 			} else {
-				return fmt.Errorf("山寨币单币种仓位价值不能超过%.0f USDT（5倍账户净值），实际: %.0f", maxPositionValue, d.PositionSizeUSD)
+				return fmt.Errorf("山寨币单币种仓位价值不能超过%.0f USDT（3倍账户净值），实际: %.0f", maxPositionValue, d.PositionSizeUSD)
 			}
 		}
 		if d.StopLoss <= 0 || d.TakeProfit <= 0 {
