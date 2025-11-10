@@ -786,9 +786,11 @@ func validateDecision(d *Decision, accountEquity float64, btcEthLeverage, altcoi
 				return fmt.Errorf("%s 开仓金额过小(%.2f USDT)，必须≥%.2f USDT%s（因价格高且精度限制，避免数量四舍五入为0）", d.Symbol, d.PositionSizeUSD, minPositionSizeBTCETH, accountTip)
 			}
 		} else {
-			// 山寨币最小仓位约束为净值0.75倍
-			if d.PositionSizeUSD < minPositionValue {
-				return fmt.Errorf("山寨币开仓金额过小(%.2f USDT)，必须≥%.2f USDT（0.75倍账户净值）", d.PositionSizeUSD, minPositionValue)
+			// 山寨币最小仓位约束：满足以下其一即可
+			// 1) 仓位价值 ≥ 0.75 × 账户净值
+			// 2) 仓位价值 ≥ 20 USDT（绝对下限，避免由于账户过小导致无法下单）
+			if !(d.PositionSizeUSD >= minPositionValue || d.PositionSizeUSD >= 20) {
+				return fmt.Errorf("山寨币开仓金额过小(%.2f USDT)，需≥%.2f USDT（0.75×账户净值）或≥20 USDT 二者之一", d.PositionSizeUSD, minPositionValue)
 			}
 		}
 
