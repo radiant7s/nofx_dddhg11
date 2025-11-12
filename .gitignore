@@ -31,6 +31,7 @@ log/
 .env
 config.json
 config.db
+*.db
 
 # 决策日志
 decision_logs/
