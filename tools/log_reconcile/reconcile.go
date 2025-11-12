@@ -1,0 +1,746 @@
+package main
+
+import (
+	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io/fs"
+	"log"
+	"math"
+	"net/http"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+
+	_ "modernc.org/sqlite"
+)
+
+// DecisionRecordPart 仅解析需要的字段
+type DecisionRecordPart struct {
+	Decisions []DecisionAction `json:"decisions"`
+}
+
+// DecisionAction from logger
+type DecisionAction struct {
+	Action    string    `json:"action"`
+	Symbol    string    `json:"symbol"`
+	Quantity  float64   `json:"quantity"`
+	Leverage  int       `json:"leverage"`
+	Price     float64   `json:"price"`
+	OrderID   int64     `json:"order_id"`
+	Timestamp time.Time `json:"timestamp"`
+	Success   bool      `json:"success"`
+	Error     string    `json:"error"`
+}
+
+// BinanceOrder 简化结构（含原始 JSON）
+type BinanceOrder struct {
+	AvgPrice         string `json:"avgPrice"`
+	ClientOrderID    string `json:"clientOrderId"`
+	CumBase          string `json:"cumBase"`
+	ExecutedQty      string `json:"executedQty"`
+	OrderID          int64  `json:"orderId"`
+	OrigQty          string `json:"origQty"`
+	OrigType         string `json:"origType"`
+	Price            string `json:"price"`
+	ReduceOnly       bool   `json:"reduceOnly"`
+	Side             string `json:"side"`
+	PositionSide     string `json:"positionSide"`
+	Status           string `json:"status"`
+	StopPrice        string `json:"stopPrice"`
+	ClosePosition    bool   `json:"closePosition"`
+	Symbol           string `json:"symbol"`
+	Pair             string `json:"pair"`
+	Time             int64  `json:"time"`
+	TimeInForce      string `json:"timeInForce"`
+	Type             string `json:"type"`
+	ActivatePrice    string `json:"activatePrice"`
+	PriceRate        string `json:"priceRate"`
+	UpdateTime       int64  `json:"updateTime"`
+	WorkingType      string `json:"workingType"`
+	PriceMatch       string `json:"priceMatch"`
+	SelfTradePrevent string `json:"selfTradePreventionMode"`
+}
+
+// 常量
+const (
+	defaultInterval = 3 * time.Second
+	createSchema    = `CREATE TABLE IF NOT EXISTS symbols(
+	trader_id TEXT,
+	symbol TEXT,
+	first_seen INTEGER,
+	PRIMARY KEY(trader_id, symbol)
+);
+CREATE TABLE IF NOT EXISTS orders(
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	trader_id TEXT,
+	symbol TEXT,
+	order_id INTEGER,
+	side TEXT,
+	position_side TEXT,
+	status TEXT,
+	avg_price REAL,
+	executed_qty REAL,
+	orig_qty REAL,
+	reduce_only INTEGER,
+	close_position INTEGER,
+	type TEXT,
+	time INTEGER,
+	update_time INTEGER,
+	raw_json TEXT,
+	UNIQUE(trader_id, symbol, order_id)
+);
+CREATE TABLE IF NOT EXISTS reconcile_state(
+	trader_id TEXT,
+	symbol TEXT,
+	last_order_id INTEGER,
+	last_fetch_time INTEGER,
+	PRIMARY KEY(trader_id, symbol)
+);`
+)
+
+func main() {
+	var action string
+	var decisionDir string
+	var dbPath string
+	var apiKey string
+	var secretKey string
+	var intervalSec int
+	var base string
+
+	flag.StringVar(&action, "action", "scan-symbols", "scan-symbols|fetch-orders|reconcile")
+	flag.StringVar(&decisionDir, "decision_dir", "decision_logs", "决策日志根目录")
+	flag.StringVar(&dbPath, "db", filepath.Join("tools", "log_reconcile", "reconcile.db"), "数据库文件路径")
+	flag.StringVar(&apiKey, "api_key", "", "币安 API Key")
+	flag.StringVar(&secretKey, "secret_key", "", "币安 Secret Key")
+	flag.IntVar(&intervalSec, "interval_sec", 3, "拉取间隔秒")
+	flag.StringVar(&base, "base", "fapi", "fapi 或 dapi")
+	flag.Parse()
+
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
+		log.Fatalf("创建目录失败: %v", err)
+	}
+
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		log.Fatalf("打开数据库失败: %v", err)
+	}
+	defer db.Close()
+
+	// 设置 SQLite 参数优化并发写入
+	_, _ = db.Exec("PRAGMA journal_mode=WAL")
+	_, _ = db.Exec("PRAGMA busy_timeout=5000")
+	_, _ = db.Exec("PRAGMA synchronous=NORMAL")
+
+	if err := initSchema(db); err != nil {
+		log.Fatalf("初始化表失败: %v", err)
+	}
+
+	switch action {
+	case "scan-symbols":
+		if err := scanSymbols(db, decisionDir); err != nil {
+			log.Fatalf("扫描失败: %v", err)
+		}
+	case "fetch-orders":
+		if apiKey == "" || secretKey == "" {
+			log.Fatalf("fetch-orders 需要 api_key 与 secret_key")
+		}
+		if err := fetchOrdersLoop(db, apiKey, secretKey, time.Duration(intervalSec)*time.Second, base); err != nil {
+			log.Fatalf("拉取订单失败: %v", err)
+		}
+	case "reconcile":
+		if err := reconcileLogs(db, decisionDir); err != nil {
+			log.Fatalf("对账失败: %v", err)
+		}
+	default:
+		log.Fatalf("未知 action: %s", action)
+	}
+}
+
+func initSchema(db *sql.DB) error {
+	_, err := db.Exec(createSchema)
+	return err
+}
+
+// scanSymbols 扫描日志目录收集开仓交易对
+func scanSymbols(db *sql.DB, decisionDir string) error {
+	totalCollected := 0 // 总共遇到的符号次数
+	err := filepath.WalkDir(decisionDir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() || !strings.HasSuffix(d.Name(), ".json") {
+			return nil
+		}
+		// 提取 trader_id (目录名)
+		relPath, _ := filepath.Rel(decisionDir, path)
+		parts := strings.Split(filepath.ToSlash(relPath), "/")
+		if len(parts) < 2 {
+			return nil // 不在子目录中,跳过
+		}
+		traderID := parts[0]
+
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		var rec DecisionRecordPart
+		if json.Unmarshal(data, &rec) != nil {
+			return nil
+		}
+		for _, act := range rec.Decisions {
+			if !act.Success {
+				continue
+			}
+			if act.Action == "open_long" || act.Action == "open_short" {
+				symbol := strings.TrimSpace(act.Symbol)
+				if symbol == "" {
+					continue
+				}
+				totalCollected++
+				_, _ = db.Exec(`INSERT OR IGNORE INTO symbols(trader_id, symbol, first_seen) VALUES(?,?,?)`,
+					traderID, symbol, time.Now().UnixMilli())
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+
+	// 统计去重后的实际符号数
+	var uniqueCount int
+	row := db.QueryRow(`SELECT COUNT(*) FROM symbols`)
+	_ = row.Scan(&uniqueCount)
+
+	log.Printf("✓ 已收集符号: %d 次开仓 → 去重后 %d 个交易对", totalCollected, uniqueCount)
+	return nil
+}
+
+// fetchOrdersLoop 按顺序轮询 symbols 表
+func fetchOrdersLoop(db *sql.DB, apiKey, secretKey string, interval time.Duration, base string) error {
+	rows, err := db.Query(`SELECT trader_id, symbol FROM symbols ORDER BY trader_id, symbol`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	client := newSignedClient(apiKey, secretKey, base)
+	for rows.Next() {
+		var traderID, symbol string
+		if err := rows.Scan(&traderID, &symbol); err != nil {
+			continue
+		}
+		if err := fetchOrdersForSymbol(db, client, traderID, symbol); err != nil {
+			log.Printf("⚠ 拉取 [%s] %s 失败: %v", traderID, symbol, err)
+		}
+		log.Printf("等待 %v 后继续...", interval)
+		time.Sleep(interval)
+	}
+	return nil
+}
+
+// fetchOrdersForSymbol 调用 allOrders
+func fetchOrdersForSymbol(db *sql.DB, client *binanceREST, traderID, symbol string) error {
+	st := time.Now()
+	// 读取增量状态
+	var lastOrderID sql.NullInt64
+	row := db.QueryRow(`SELECT last_order_id FROM reconcile_state WHERE trader_id = ? AND symbol = ?`, traderID, symbol)
+	_ = row.Scan(&lastOrderID)
+
+	var all []BinanceOrder
+	var rawAll []map[string]any
+	// 若有 lastOrderID 直接使用 orderId 参数获取后续订单
+	if lastOrderID.Valid && lastOrderID.Int64 > 0 {
+		orders, raw, err := client.allOrders(symbol, lastOrderID.Int64, 0, 0)
+		if err != nil {
+			return err
+		}
+		all = append(all, orders...)
+		rawAll = append(rawAll, raw...)
+	} else {
+		// 初次：按时间窗口分段（最多最近 30 天向后，接口每次最大 7 天）
+		end := time.Now().UnixMilli()
+		start := end - 7*24*3600*1000 // 最近 7 天即可，避免过多权重
+		orders, raw, err := client.allOrders(symbol, 0, start, end)
+		if err != nil {
+			return err
+		}
+		all = append(all, orders...)
+		rawAll = append(rawAll, raw...)
+	}
+
+	if len(all) == 0 {
+		log.Printf("✓ [%s] %s 无新订单", traderID, symbol)
+		return nil
+	}
+
+	// 使用事务批量写入，避免数据库锁定
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("开启事务失败: %w", err)
+	}
+	defer tx.Rollback()
+
+	stmt, err := tx.Prepare(`INSERT OR REPLACE INTO orders(trader_id, symbol, order_id, side, position_side, status, avg_price, executed_qty, orig_qty, reduce_only, close_position, type, time, update_time, raw_json)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+	if err != nil {
+		return fmt.Errorf("准备语句失败: %w", err)
+	}
+	defer stmt.Close()
+
+	for i, ord := range all {
+		b, _ := json.Marshal(rawAll[i])
+		avg := parseFloat(ord.AvgPrice)
+		exec := parseFloat(ord.ExecutedQty)
+		orig := parseFloat(ord.OrigQty)
+		_, e := stmt.Exec(traderID, symbol, ord.OrderID, ord.Side, ord.PositionSide, ord.Status, avg, exec, orig,
+			boolToInt(ord.ReduceOnly), boolToInt(ord.ClosePosition), ord.Type, ord.Time, ord.UpdateTime, string(b))
+		if e != nil {
+			log.Printf("⚠ 写入订单失败 [%s] %s order_id=%d: %v", traderID, symbol, ord.OrderID, e)
+		}
+	}
+
+	// 更新状态
+	_, err = tx.Exec(`INSERT OR REPLACE INTO reconcile_state(trader_id, symbol, last_order_id, last_fetch_time) VALUES(?,?,?,?)`,
+		traderID, symbol, latestOrderID(all), time.Now().UnixMilli())
+	if err != nil {
+		return fmt.Errorf("更新状态失败: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("提交事务失败: %w", err)
+	}
+
+	log.Printf("✓ [%s] %s 增量拉取 %d 条, 用时 %v", traderID, symbol, len(all), time.Since(st))
+	return nil
+}
+
+// reconcileLogs placeholder
+func reconcileLogs(db *sql.DB, decisionDir string) error {
+	// 读取订单缓存
+	ordersMap, err := loadOrdersGrouped(db)
+	if err != nil {
+		return err
+	}
+
+	// 遍历 trader 子目录（decision_logs 下的目录）
+	entries, err := os.ReadDir(decisionDir)
+	if err != nil {
+		return fmt.Errorf("读取决策目录失败: %w", err)
+	}
+
+	for _, ent := range entries {
+		if !ent.IsDir() {
+			continue
+		}
+		traderID := ent.Name()
+		traderPath := filepath.Join(decisionDir, traderID)
+		if err := reconcileTrader(traderPath, traderID, ordersMap); err != nil {
+			log.Printf("⚠ 对账 %s 失败: %v", traderPath, err)
+		}
+	}
+	return nil
+}
+
+// loadOrdersGrouped 按 trader_id+symbol+position_side 分组订单（已按时间排序）
+func loadOrdersGrouped(db *sql.DB) (map[string][]BinanceOrder, error) {
+	rows, err := db.Query(`SELECT trader_id, symbol, order_id, side, position_side, status, avg_price, executed_qty, orig_qty, reduce_only, close_position, type, time, update_time, raw_json FROM orders`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	res := make(map[string][]BinanceOrder)
+	for rows.Next() {
+		var o BinanceOrder
+		var traderID, symbol string
+		var avg, exec, orig float64
+		var reduceOnly, closePos int
+		var raw string
+		// 重建部分字段
+		if err := rows.Scan(&traderID, &symbol, &o.OrderID, &o.Side, &o.PositionSide, &o.Status, &avg, &exec, &orig, &reduceOnly, &closePos, &o.Type, &o.Time, &o.UpdateTime, &raw); err != nil {
+			continue
+		}
+		o.Symbol = symbol
+		// 直接用 strconv.FormatFloat 保持精度
+		o.ExecutedQty = strconv.FormatFloat(exec, 'f', -1, 64)
+		o.OrigQty = strconv.FormatFloat(orig, 'f', -1, 64)
+		o.AvgPrice = strconv.FormatFloat(avg, 'f', -1, 64)
+		// 如果 AvgPrice 为 0，尝试从 raw_json 解析 price
+		if avg == 0 && raw != "" {
+			var rawData map[string]interface{}
+			if json.Unmarshal([]byte(raw), &rawData) == nil {
+				if priceStr, ok := rawData["price"].(string); ok {
+					o.Price = priceStr
+				}
+			}
+		}
+		o.ReduceOnly = reduceOnly == 1
+		o.ClosePosition = closePos == 1
+		// key = trader_id + symbol + position_side
+		key := traderID + "_" + symbol + "_" + strings.ToUpper(o.PositionSide)
+		res[key] = append(res[key], o)
+	}
+	// 排序
+	for k := range res {
+		sort.Slice(res[k], func(i, j int) bool { return res[k][i].Time < res[k][j].Time })
+	}
+	return res, nil
+}
+
+// reconcileTrader 针对单个 trader 日志目录执行校验与补全
+func reconcileTrader(dir string, traderID string, orders map[string][]BinanceOrder) error {
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	// 收集日志记录
+	var logFiles []string
+	for _, f := range files {
+		if f.IsDir() || !strings.HasSuffix(f.Name(), ".json") {
+			continue
+		}
+		logFiles = append(logFiles, filepath.Join(dir, f.Name()))
+	}
+	// 解析并构建开/平仓状态
+	openPositions := make(map[string]DecisionAction) // key=symbol_side
+	closedPositions := make(map[string]bool)
+	fileActions := make(map[string][]DecisionAction) // 文件到动作列表
+
+	for _, fp := range logFiles {
+		data, err := os.ReadFile(fp)
+		if err != nil {
+			continue
+		}
+		var rec DecisionRecordPart
+		if json.Unmarshal(data, &rec) != nil {
+			continue
+		}
+		for i, act := range rec.Decisions {
+			if !act.Success {
+				continue
+			}
+			fileActions[fp] = append(fileActions[fp], act)
+			if act.Action == "open_long" || act.Action == "open_short" {
+				key := act.Symbol + "_" + sideFromAction(act.Action)
+				openPositions[key] = act
+			} else if isCloseAction(act.Action) {
+				key := act.Symbol + "_" + sideFromAction(act.Action)
+				closedPositions[key] = true
+			}
+			// partial_close 暂不特殊处理
+			_ = i
+		}
+	}
+
+	// 查找缺失的平仓
+	for key, openAct := range openPositions {
+		if closedPositions[key] {
+			continue
+		}
+		// 根据 trader_id+key 获取订单候选
+		ordKey := traderID + "_" + key
+		ordList := orders[ordKey]
+		if len(ordList) == 0 {
+			continue
+		}
+		// 选择开仓时间后最近的一个 closePosition 或 reduceOnly 订单
+		var best *BinanceOrder
+		for i := range ordList {
+			o := ordList[i]
+			if o.Time < openAct.Timestamp.UnixMilli() {
+				continue
+			}
+			// 判断是否是平仓候选
+			if !(o.ClosePosition || o.ReduceOnly) {
+				continue
+			}
+			// Side 应与开仓对应的平仓方向相反
+			if !matchCloseSide(openAct.Action, o.Side) {
+				continue
+			}
+			// 🔧 只使用已完全成交的订单 (FILLED)
+			if strings.ToUpper(o.Status) != "FILLED" {
+				continue
+			}
+			// 🔧 确保有成交数量和价格
+			qty := parseFloat(o.ExecutedQty)
+			price := safePrice(&o)
+			if qty <= 0 || price <= 0 {
+				continue
+			}
+			best = &o
+			break
+		}
+		if best == nil {
+			continue
+		}
+		// 生成补全文件
+		closeAction := DecisionAction{
+			Action:    closeActionName(openAct.Action),
+			Symbol:    openAct.Symbol,
+			Quantity:  parseFloat(best.ExecutedQty),
+			Price:     safePrice(best),
+			OrderID:   best.OrderID,
+			Timestamp: time.UnixMilli(best.Time),
+			Success:   true,
+		}
+		// 写入新文件 decision_reconcile_*
+		fname := fmt.Sprintf("decision_reconcile_%s_%d.json", time.Now().Format("20060102_150405"), best.OrderID)
+		path := filepath.Join(dir, fname)
+		rec := DecisionRecordPart{Decisions: []DecisionAction{closeAction}}
+		b, _ := json.MarshalIndent(rec, "", "  ")
+		if err := os.WriteFile(path, b, 0644); err != nil {
+			log.Printf("⚠ 写入补全文件失败 %s: %v", path, err)
+		} else {
+			log.Printf("➕ 已补全平仓: %s → %s", key, path)
+		}
+	}
+
+	// 校正已有的 close 行为（简单实现：价格或数量偏差 >1%）
+	for fp, acts := range fileActions {
+		changed := false
+		for i, act := range acts {
+			if !isCloseAction(act.Action) {
+				continue
+			}
+			key := act.Symbol + "_" + sideFromAction(act.Action)
+			ordKey := traderID + "_" + key
+			ordList := orders[ordKey]
+			if len(ordList) == 0 {
+				continue
+			}
+			var candidate *BinanceOrder
+			for _, o := range ordList {
+				if !matchCloseSide(act.Action, o.Side) {
+					continue
+				}
+				// 时间容差：±30分钟
+				if math.Abs(float64(o.Time-act.Timestamp.UnixMilli())) > 30*60*1000 {
+					continue
+				}
+				if !(o.ClosePosition || o.ReduceOnly) {
+					continue
+				}
+				// 🔧 只使用已完全成交的订单
+				if strings.ToUpper(o.Status) != "FILLED" {
+					continue
+				}
+				// 🔧 确保有成交数量和价格
+				qty := parseFloat(o.ExecutedQty)
+				price := safePrice(&o)
+				if qty <= 0 || price <= 0 {
+					continue
+				}
+				candidate = &o
+				break
+			}
+			if candidate == nil {
+				continue
+			}
+			qty := parseFloat(candidate.ExecutedQty)
+			price := safePrice(candidate)
+			if deviation(act.Quantity, qty) > 0.01 || deviation(act.Price, price) > 0.01 {
+				acts[i].Quantity = qty
+				acts[i].Price = price
+				acts[i].OrderID = candidate.OrderID
+				acts[i].Timestamp = time.UnixMilli(candidate.Time)
+				changed = true
+			}
+		}
+		if changed {
+			// 备份原文件
+			_ = os.Rename(fp, fp+".bak")
+			// 读取原文件其余字段并只替换 decisions
+			if err := writeUpdatedFilePreserve(fp+".bak", fp, acts); err != nil {
+				log.Printf("⚠ 覆盖文件失败 %s: %v", fp, err)
+			} else {
+				log.Printf("✏ 已校正文件 %s", fp)
+			}
+		}
+	}
+
+	return nil
+}
+
+// ---------- 辅助 ----------
+func sideFromAction(action string) string {
+	if strings.Contains(action, "long") {
+		return "LONG"
+	}
+	return "SHORT"
+}
+
+func isCloseAction(action string) bool {
+	return strings.HasPrefix(action, "close_") || strings.HasPrefix(action, "auto_close_")
+}
+
+func closeActionName(openAction string) string {
+	if openAction == "open_long" {
+		return "close_long"
+	}
+	return "close_short" // open_short 对应 close_short
+}
+
+func matchCloseSide(actionOrOpen string, orderSide string) bool {
+	// open_long -> 平仓应是 SELL; open_short -> 平仓应是 BUY
+	// close_long 同理 SELL, close_short BUY
+	isLong := strings.Contains(actionOrOpen, "long")
+	if isLong {
+		return strings.ToUpper(orderSide) == "SELL"
+	}
+	return strings.ToUpper(orderSide) == "BUY"
+}
+
+func safePrice(o *BinanceOrder) float64 {
+	avg := parseFloat(o.AvgPrice)
+	if avg > 0 {
+		return avg
+	}
+	return parseFloat(o.Price)
+}
+
+func deviation(a, b float64) float64 {
+	if a == 0 && b == 0 {
+		return 0
+	}
+	den := math.Max(math.Abs(a), math.Abs(b))
+	return math.Abs(a-b) / den
+}
+
+// ========= 工具函数 =========
+
+// writeUpdatedFilePreserve 读取 src JSON，保留除 decisions 外的所有顶层字段，仅替换 decisions 后写入 dst
+func writeUpdatedFilePreserve(srcPath, dstPath string, newActs []DecisionAction) error {
+	data, err := os.ReadFile(srcPath)
+	if err != nil {
+		return err
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(data, &obj); err != nil {
+		// 回退：若不是对象结构，直接写最小结构
+		rec := DecisionRecordPart{Decisions: newActs}
+		b, _ := json.MarshalIndent(rec, "", "  ")
+		return os.WriteFile(dstPath, b, 0644)
+	}
+	obj["decisions"] = newActs
+	b, err := json.MarshalIndent(obj, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(dstPath, b, 0644)
+}
+
+func parseFloat(s string) float64 { f, _ := strconv.ParseFloat(s, 64); return f }
+
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+func latestOrderID(list []BinanceOrder) int64 {
+	var m int64
+	for _, o := range list {
+		if o.OrderID > m {
+			m = o.OrderID
+		}
+	}
+	return m
+}
+
+// ========== 币安 REST 签名客户端（最小实现 allOrders） ==========
+
+// 需要的导入
+// (为保持文件紧凑，上方 import 未包含下面依赖, 合并时请确保添加)
+
+// 重新整理 import 以避免遗漏
+// --- 我们在顶部已 import 需要的包 ---
+
+// binanceREST 简化客户端
+
+type binanceREST struct {
+	apiKey    string
+	secretKey string
+	baseURL   string
+	client    *http.Client
+}
+
+func newSignedClient(apiKey, secretKey, base string) *binanceREST {
+	url := "https://dapi.binance.com" // USDⓈ-M: fapi  / 币本位交割合约: dapi
+	if base == "fapi" {
+		url = "https://fapi.binance.com"
+	}
+	return &binanceREST{apiKey: apiKey, secretKey: secretKey, baseURL: url, client: &http.Client{Timeout: 15 * time.Second}}
+}
+
+func (c *binanceREST) allOrders(symbol string, orderID, startTime, endTime int64) ([]BinanceOrder, []map[string]any, error) {
+	if symbol == "" {
+		return nil, nil, errors.New("symbol 不能为空")
+	}
+
+	params := []string{fmt.Sprintf("symbol=%s", symbol)}
+	if orderID > 0 {
+		params = append(params, fmt.Sprintf("orderId=%d", orderID))
+	}
+	if startTime > 0 {
+		params = append(params, fmt.Sprintf("startTime=%d", startTime))
+	}
+	if endTime > 0 {
+		params = append(params, fmt.Sprintf("endTime=%d", endTime))
+	}
+	params = append(params, fmt.Sprintf("timestamp=%d", time.Now().UnixMilli()))
+	qs := strings.Join(params, "&")
+	// 签名
+	sig := hmacSHA256Hex(qs, c.secretKey)
+	path := "/dapi/v1/allOrders"
+	if strings.Contains(c.baseURL, "fapi") {
+		path = "/fapi/v1/allOrders"
+	}
+	url := fmt.Sprintf("%s%s?%s&signature=%s", c.baseURL, path, qs, sig)
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	req.Header.Set("X-MBX-APIKEY", c.apiKey)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != 200 {
+		return nil, nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+	}
+	var raw []map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		return nil, nil, err
+	}
+	var list []BinanceOrder
+	for _, r := range raw {
+		b, _ := json.Marshal(r)
+		var bo BinanceOrder
+		if json.Unmarshal(b, &bo) == nil {
+			list = append(list, bo)
+		}
+	}
+	return list, raw, nil
+}
+
+// 签名
+
+func hmacSHA256Hex(data, secret string) string {
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ===== 缺失 import 的补充 =====
+// 为保持结构清晰，这些放在文件末尾避免多次滚动
+// 已在顶部 import 所需包，无需重复
