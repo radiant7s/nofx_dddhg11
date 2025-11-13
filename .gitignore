@@ -11,6 +11,7 @@ nofx-auto
 *.exe
 nofx
 nofx_test
+*.zip
 
 # Go 相关
 *.test
