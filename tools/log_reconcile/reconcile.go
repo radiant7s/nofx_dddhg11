@@ -26,7 +26,9 @@ import (
 
 // DecisionRecordPart 仅解析需要的字段
 type DecisionRecordPart struct {
-	Decisions []DecisionAction `json:"decisions"`
+	Timestamp    time.Time        `json:"timestamp"`
+	DecisionJSON string           `json:"decision_json"`
+	Decisions    []DecisionAction `json:"decisions"`
 }
 
 // DecisionAction from logger
@@ -74,6 +76,8 @@ type BinanceOrder struct {
 // 常量
 const (
 	defaultInterval = 3 * time.Second
+	// 订单与决策时间匹配窗口（毫秒）
+	timeToleranceMs = 30 * 60 * 1000
 	createSchema    = `CREATE TABLE IF NOT EXISTS symbols(
 	trader_id TEXT,
 	symbol TEXT,
@@ -160,6 +164,10 @@ func main() {
 	case "reconcile":
 		if err := reconcileLogs(db, decisionDir); err != nil {
 			log.Fatalf("对账失败: %v", err)
+		}
+	case "partial-close-reconcile":
+		if err := reconcilePartialClose(db, decisionDir); err != nil {
+			log.Fatalf("部分平仓对账失败: %v", err)
 		}
 	default:
 		log.Fatalf("未知 action: %s", action)
@@ -505,55 +513,207 @@ func reconcileTrader(dir string, traderID string, orders map[string][]BinanceOrd
 		}
 	}
 
-	// 校正已有的 close 行为（简单实现：价格或数量偏差 >1%）
+	// 校正已有的开仓行为
+	var openMismatches []string
 	for fp, acts := range fileActions {
 		changed := false
 		for i, act := range acts {
-			if !isCloseAction(act.Action) {
-				continue
+
+			// 处理开仓
+			if act.Action == "open_long" || act.Action == "open_short" {
+				// 订单候选：优先使用对应方向，其次回退 BOTH
+				lists := getOrderLists(orders, traderID, act.Symbol, sideFromAction(act.Action))
+				var candidate *BinanceOrder
+				bestDelta := int64(1<<62 - 1)
+				for _, ordList := range lists {
+					for idx := range ordList {
+						o := ordList[idx]
+						// 开仓方向匹配：open_long -> BUY/LONG, open_short -> SELL/SHORT
+						if !matchOpenSide(act.Action, o.Side) {
+							continue
+						}
+						// 时间容差
+						delta := abs64(o.Time - act.Timestamp.UnixMilli())
+						if delta > timeToleranceMs {
+							continue
+						}
+						// 开仓订单不应该是 reduceOnly 或 closePosition
+						if o.ClosePosition || o.ReduceOnly {
+							continue
+						}
+						// 必须完全成交，且有数量与价格
+						if strings.ToUpper(o.Status) != "FILLED" {
+							continue
+						}
+						qty := parseFloat(o.ExecutedQty)
+						price := safePrice(&o)
+						if qty <= 0 || price <= 0 {
+							continue
+						}
+						if delta < bestDelta {
+							bestDelta = delta
+							candidate = &o
+						}
+					}
+				}
+				if candidate == nil {
+					openMismatches = append(openMismatches, fmt.Sprintf("⚠ [%s] %s %s 未找到匹配的开仓订单 (决策时间: %s, 价格: %.4f, 数量: %.4f) → 改为 wait",
+						traderID, act.Symbol, act.Action, act.Timestamp.Format("2006-01-02 15:04:05"), act.Price, act.Quantity))
+					// 输出调试信息：显示所有候选订单的时间差异
+					log.Printf("⏰ [调试] %s %s 时间对比:", act.Symbol, act.Action)
+					log.Printf("   决策记录时间: %s", act.Timestamp.Format("2006-01-02 15:04:05"))
+					for _, ordList := range lists {
+						for idx, o := range ordList {
+							if idx >= 5 {
+								break
+							}
+							diffMinutes := float64(o.Time-act.Timestamp.UnixMilli()) / 60000
+							log.Printf("   订单 %d (ID:%d): %s (时间差 %.1f分钟, 方向:%s, 状态:%s)",
+								idx+1, o.OrderID,
+								time.UnixMilli(o.Time).Format("2006-01-02 15:04:05"),
+								diffMinutes, o.Side, o.Status)
+						}
+					}
+					// 🔧 将无法匹配的开仓操作改为 wait
+					acts[i].Action = "wait"
+					acts[i].OrderID = 0
+					acts[i].Quantity = 0
+					acts[i].Price = 0
+					changed = true
+					continue
+				}
+				qty := parseFloat(candidate.ExecutedQty)
+				price := safePrice(candidate)
+				// 检查偏差
+				qtyDev := deviation(act.Quantity, qty)
+				priceDev := deviation(act.Price, price)
+				if qtyDev > 0.01 || priceDev > 0.01 {
+					openMismatches = append(openMismatches, fmt.Sprintf("📝 [%s] %s %s 数据偏差: 数量 %.4f→%.4f (%.2f%%), 价格 %.4f→%.4f (%.2f%%)",
+						traderID, act.Symbol, act.Action, act.Quantity, qty, qtyDev*100, act.Price, price, priceDev*100))
+					acts[i].Quantity = qty
+					acts[i].Price = price
+					acts[i].OrderID = candidate.OrderID
+					acts[i].Timestamp = time.UnixMilli(candidate.Time)
+					changed = true
+				} else if act.OrderID != candidate.OrderID {
+					// 价格数量一致但 OrderID 不同
+					openMismatches = append(openMismatches, fmt.Sprintf("🔧 [%s] %s %s OrderID 不匹配: %d→%d",
+						traderID, act.Symbol, act.Action, act.OrderID, candidate.OrderID))
+					acts[i].OrderID = candidate.OrderID
+					changed = true
+				}
 			}
-			key := act.Symbol + "_" + sideFromAction(act.Action)
-			ordKey := traderID + "_" + key
-			ordList := orders[ordKey]
-			if len(ordList) == 0 {
-				continue
+			// 处理平仓
+			if isCloseAction(act.Action) {
+				lists := getOrderLists(orders, traderID, act.Symbol, sideFromAction(act.Action))
+				var candidate *BinanceOrder
+				bestDelta := int64(1<<62 - 1)
+				for _, ordList := range lists {
+					for idx := range ordList {
+						o := ordList[idx]
+						if !matchCloseSide(act.Action, o.Side) {
+							continue
+						}
+						delta := abs64(o.Time - act.Timestamp.UnixMilli())
+						if delta > timeToleranceMs {
+							continue
+						}
+						if !(o.ClosePosition || o.ReduceOnly) {
+							continue
+						}
+						if strings.ToUpper(o.Status) != "FILLED" {
+							continue
+						}
+						qty := parseFloat(o.ExecutedQty)
+						price := safePrice(&o)
+						if qty <= 0 || price <= 0 {
+							continue
+						}
+						if delta < bestDelta {
+							bestDelta = delta
+							candidate = &o
+						}
+					}
+				}
+				if candidate == nil {
+					// 🔧 将无法匹配的平仓操作改为 wait
+					openMismatches = append(openMismatches, fmt.Sprintf("⚠ [%s] %s %s 未找到匹配的平仓订单 (决策时间: %s) → 改为 wait",
+						traderID, act.Symbol, act.Action, act.Timestamp.Format("2006-01-02 15:04:05")))
+					acts[i].Action = "wait"
+					acts[i].OrderID = 0
+					acts[i].Quantity = 0
+					acts[i].Price = 0
+					changed = true
+					continue
+				}
+				qty := parseFloat(candidate.ExecutedQty)
+				price := safePrice(candidate)
+				if deviation(act.Quantity, qty) > 0.01 || deviation(act.Price, price) > 0.01 {
+					acts[i].Quantity = qty
+					acts[i].Price = price
+					acts[i].OrderID = candidate.OrderID
+					acts[i].Timestamp = time.UnixMilli(candidate.Time)
+					changed = true
+				}
 			}
-			var candidate *BinanceOrder
-			for _, o := range ordList {
-				if !matchCloseSide(act.Action, o.Side) {
+
+			// 处理 partial_close - 也需要匹配实际订单
+			if act.Action == "partial_close" {
+				// 同时在 LONG/SHORT 列表中寻找 reduce_only 的部分平仓成交
+				listsLong := getOrderLists(orders, traderID, act.Symbol, "LONG")
+				listsShort := getOrderLists(orders, traderID, act.Symbol, "SHORT")
+				var candidate *BinanceOrder
+				bestDelta := int64(1<<62 - 1)
+				check := func(ordList []BinanceOrder, closeAction string) {
+					for idx := range ordList {
+						o := ordList[idx]
+						if !matchCloseSide(closeAction, o.Side) {
+							continue
+						}
+						delta := abs64(o.Time - act.Timestamp.UnixMilli())
+						if delta > timeToleranceMs {
+							continue
+						}
+						if !o.ReduceOnly {
+							continue
+						}
+						if strings.ToUpper(o.Status) != "FILLED" {
+							continue
+						}
+						qty := parseFloat(o.ExecutedQty)
+						price := safePrice(&o)
+						if qty <= 0 || price <= 0 {
+							continue
+						}
+						if delta < bestDelta {
+							bestDelta = delta
+							candidate = &o
+						}
+					}
+				}
+				for _, l := range listsLong {
+					check(l, "close_long")
+				}
+				for _, l := range listsShort {
+					check(l, "close_short")
+				}
+				if candidate == nil {
+					openMismatches = append(openMismatches, fmt.Sprintf("⚠ [%s] %s partial_close 未找到匹配订单 → 改为 wait", traderID, act.Symbol))
+					acts[i].Action = "wait"
+					acts[i].OrderID = 0
+					acts[i].Quantity = 0
+					acts[i].Price = 0
+					changed = true
 					continue
 				}
-				// 时间容差：±30分钟
-				if math.Abs(float64(o.Time-act.Timestamp.UnixMilli())) > 30*60*1000 {
-					continue
-				}
-				if !(o.ClosePosition || o.ReduceOnly) {
-					continue
-				}
-				// 🔧 只使用已完全成交的订单
-				if strings.ToUpper(o.Status) != "FILLED" {
-					continue
-				}
-				// 🔧 确保有成交数量和价格
-				qty := parseFloat(o.ExecutedQty)
-				price := safePrice(&o)
-				if qty <= 0 || price <= 0 {
-					continue
-				}
-				candidate = &o
-				break
 			}
-			if candidate == nil {
-				continue
-			}
-			qty := parseFloat(candidate.ExecutedQty)
-			price := safePrice(candidate)
-			if deviation(act.Quantity, qty) > 0.01 || deviation(act.Price, price) > 0.01 {
-				acts[i].Quantity = qty
-				acts[i].Price = price
-				acts[i].OrderID = candidate.OrderID
-				acts[i].Timestamp = time.UnixMilli(candidate.Time)
-				changed = true
+
+			// 处理其他操作类型 (hold, update_stop_loss, update_take_profit 等)
+			// 这些操作不需要实际订单,但如果标记为 success 但没有对应的真实交易操作,也改为 wait
+			if !needsOrderMatch(act.Action) && act.Action != "wait" && act.Action != "hold" {
+				// update_stop_loss, update_take_profit 等操作应该有对应的修改订单记录
+				// 但由于 allOrders 接口可能不包含这些修改,暂时保留原样
+				// 如果未来需要验证,可以在这里添加逻辑
 			}
 		}
 		if changed {
@@ -565,6 +725,21 @@ func reconcileTrader(dir string, traderID string, orders map[string][]BinanceOrd
 			} else {
 				log.Printf("✏ 已校正文件 %s", fp)
 			}
+		}
+	}
+
+	// 输出开仓不匹配报告
+	if len(openMismatches) > 0 {
+		reportPath := filepath.Join(dir, fmt.Sprintf("open_mismatch_report_%s.txt", time.Now().Format("20060102_150405")))
+		reportContent := strings.Join(append([]string{"=== 开仓数据核对报告 ===", fmt.Sprintf("生成时间: %s", time.Now().Format("2006-01-02 15:04:05")), ""}, openMismatches...), "\n")
+		if err := os.WriteFile(reportPath, []byte(reportContent), 0644); err != nil {
+			log.Printf("⚠ 写入开仓不匹配报告失败: %v", err)
+		} else {
+			log.Printf("📊 已生成开仓不匹配报告: %s (%d 条)", reportPath, len(openMismatches))
+		}
+		// 同时输出到日志
+		for _, msg := range openMismatches {
+			log.Println(msg)
 		}
 	}
 
@@ -583,11 +758,27 @@ func isCloseAction(action string) bool {
 	return strings.HasPrefix(action, "close_") || strings.HasPrefix(action, "auto_close_")
 }
 
+func needsOrderMatch(action string) bool {
+	// 需要匹配实际订单的操作类型
+	return action == "open_long" || action == "open_short" ||
+		isCloseAction(action) ||
+		action == "partial_close"
+}
+
 func closeActionName(openAction string) string {
 	if openAction == "open_long" {
 		return "close_long"
 	}
 	return "close_short" // open_short 对应 close_short
+}
+
+func matchOpenSide(action string, orderSide string) bool {
+	// open_long -> 开仓应是 BUY; open_short -> 开仓应是 SELL
+	isLong := strings.Contains(action, "long")
+	if isLong {
+		return strings.ToUpper(orderSide) == "BUY"
+	}
+	return strings.ToUpper(orderSide) == "SELL"
 }
 
 func matchCloseSide(actionOrOpen string, orderSide string) bool {
@@ -614,6 +805,28 @@ func deviation(a, b float64) float64 {
 	}
 	den := math.Max(math.Abs(a), math.Abs(b))
 	return math.Abs(a-b) / den
+}
+
+// 获取订单列表：优先 position_side，回退 BOTH
+func getOrderLists(group map[string][]BinanceOrder, traderID, symbol, posSide string) [][]BinanceOrder {
+	var res [][]BinanceOrder
+	key := traderID + "_" + symbol + "_" + strings.ToUpper(posSide)
+	if lst, ok := group[key]; ok && len(lst) > 0 {
+		res = append(res, lst)
+	}
+	// 兜底：一向模式 positionSide=BOTH
+	keyBoth := traderID + "_" + symbol + "_BOTH"
+	if lst, ok := group[keyBoth]; ok && len(lst) > 0 {
+		res = append(res, lst)
+	}
+	return res
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
 }
 
 // ========= 工具函数 =========
