@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"math"
@@ -468,6 +469,13 @@ func fetchOrdersForSymbol(db *sql.DB, client *binanceREST, traderID, symbol stri
 	var lastOrderID sql.NullInt64
 	row := db.QueryRow(`SELECT last_order_id FROM reconcile_state WHERE trader_id = ? AND symbol = ?`, traderID, symbol)
 	_ = row.Scan(&lastOrderID)
+
+	log.Printf("拉取订单: traderID=%s, symbol=%s, base=%s, lastOrderID=%v", traderID, symbol, client.baseURL, func() any {
+		if lastOrderID.Valid {
+			return lastOrderID.Int64
+		}
+		return nil
+	}())
 
 	var all []BinanceOrder
 	var rawAll []map[string]any
@@ -1125,13 +1133,16 @@ func (c *binanceREST) allOrders(symbol string, orderID, startTime, endTime int64
 	if endTime > 0 {
 		params = append(params, fmt.Sprintf("endTime=%d", endTime))
 	}
+	// 默认限制 100，并设置一个合理的 recvWindow
+	params = append(params, "limit=100")
+	params = append(params, "recvWindow=5000")
 	params = append(params, fmt.Sprintf("timestamp=%d", time.Now().UnixMilli()))
 	qs := strings.Join(params, "&")
 	// 签名
 	sig := hmacSHA256Hex(qs, c.secretKey)
-	path := "/dapi/v1/allOrders?limit=100"
+	path := "/dapi/v1/allOrders"
 	if strings.Contains(c.baseURL, "fapi") {
-		path = "/fapi/v1/allOrders?limit=100"
+		path = "/fapi/v1/allOrders"
 	}
 	url := fmt.Sprintf("%s%s?%s&signature=%s", c.baseURL, path, qs, sig)
 
@@ -1143,7 +1154,8 @@ func (c *binanceREST) allOrders(symbol string, orderID, startTime, endTime int64
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return nil, nil, fmt.Errorf("HTTP %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return nil, nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	var raw []map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
