@@ -5,18 +5,11 @@
 ## 使用方法
 
 ```powershell
-# 1. 扫描交易对
+先扫描符号（必须先有符号，拉单才有目标）
 go run ./tools/log_reconcile -action scan-symbols
-
-# 2A. 拉取订单（单一密钥，旧方式）
-go run ./tools/log_reconcile -action fetch-orders -api_key YOUR_KEY -secret_key YOUR_SECRET
-
-# 2B. 从 config.db 自动读取交易员与密钥（推荐）
-#    每位交易员将使用各自的币安密钥，避免混用导致重复或错配
+按交易员从配置库拉单（新增了可见日志）
 go run ./tools/log_reconcile -action fetch-orders-db -config_db config.db -user_id default -base fapi
-
-
-# 3. 执行对账
+对账
 go run ./tools/log_reconcile -action reconcile
 ```
 

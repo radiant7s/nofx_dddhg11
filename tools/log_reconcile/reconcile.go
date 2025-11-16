@@ -285,12 +285,32 @@ func fetchOrdersFromConfigDB(reconcileDB *sql.DB, configDBPath, userID string, i
 	}
 	defer rows.Close()
 
+	log.Printf("🔎 从配置库读取交易员与密钥: db=%s, user_id=%s, base=%s", configDBPath, userID, base)
+	foundTraders := 0
+	processedSymbols := 0
+	failedTasks := 0
+
 	for rows.Next() {
 		var traderID, apiKey, secretKey string
 		if err := rows.Scan(&traderID, &apiKey, &secretKey); err != nil {
+			failedTasks++
+			log.Printf("⚠ 读取交易员行失败: %v", err)
 			continue
 		}
+		foundTraders++
 		// 查询该交易员的所有已扫描 symbol
+		var symCount int
+		if err := reconcileDB.QueryRow(`SELECT COUNT(*) FROM symbols WHERE trader_id = ?`, traderID).Scan(&symCount); err != nil {
+			failedTasks++
+			log.Printf("⚠ 读取交易员 %s 的符号数失败: %v", traderID, err)
+			continue
+		}
+		if symCount == 0 {
+			log.Printf("ℹ 交易员 %s 尚未扫描到任何符号，请先执行: go run ./tools/log_reconcile -action scan-symbols", traderID)
+			continue
+		}
+		log.Printf("▶ 开始拉取交易员 %s（%d 个符号）", traderID, symCount)
+
 		symRows, err := reconcileDB.Query(`SELECT symbol FROM symbols WHERE trader_id = ? ORDER BY symbol`, traderID)
 		if err != nil {
 			log.Printf("⚠ 读取交易员 %s 的符号失败: %v", traderID, err)
@@ -300,16 +320,25 @@ func fetchOrdersFromConfigDB(reconcileDB *sql.DB, configDBPath, userID string, i
 		for symRows.Next() {
 			var symbol string
 			if err := symRows.Scan(&symbol); err != nil {
+				failedTasks++
+				log.Printf("⚠ 解析符号行失败: %v", err)
 				continue
 			}
 			if err := fetchOrdersForSymbol(reconcileDB, client, traderID, symbol); err != nil {
 				log.Printf("⚠ 拉取 [%s] %s 失败: %v", traderID, symbol, err)
+				failedTasks++
 			}
 			log.Printf("等待 %v 后继续...", interval)
 			time.Sleep(interval)
+			processedSymbols++
 		}
 		_ = symRows.Close()
 	}
+
+	if foundTraders == 0 {
+		log.Printf("ℹ 未在配置库中找到可用的 Binance 交易员（或密钥为空）。请在 Web/配置中为 user_id=%s 的交易员配置 api_key/secret_key。", userID)
+	}
+	log.Printf("✅ 完成: 交易员=%d, 符号处理=%d, 错误=%d", foundTraders, processedSymbols, failedTasks)
 	return nil
 }
 
