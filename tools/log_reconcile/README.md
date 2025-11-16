@@ -26,6 +26,26 @@ go run ./tools/log_reconcile -action partial-close-reconcile
 
 # 备选：单一密钥模式（不推荐，易混用不同交易员的订单）
 go run ./tools/log_reconcile -action fetch-orders -api_key <API_KEY> -secret_key <SECRET> -base fapi
+
+
+
+
+
+
+
+
+PS D:\ai\nofx-dev\tools\log_reconcile> python .\validate_orders_vs_decisions.py --orders .\orders_export.with_timezh.json --logs-dir ..\..\decision_logs\binance_e10b9e46-2a6e-4124-9fa1-101973f1284f_deepseek_1762782649 --time-tolerance-sec 240 --price-tol-pct 0.6 --qty-tol-pct 1.0
+D:\ai\nofx-dev\tools\log_reconcile\validate_orders_vs_decisions.py:3: SyntaxWarning: invalid escape sequence '\o'
+  """
+D:\ai\nofx-dev\tools\log_reconcile\validate_orders_vs_decisions.py:67: DeprecationWarning: datetime.datetime.utcfromtimestamp() is deprecated and scheduled for removal in a future version. Use timezone-aware objects to represent datetimes in UTC: datetime.datetime.fromtimestamp(timestamp, datetime.UTC).
+  return dt.datetime.utcfromtimestamp(ms / 1000.0).replace(tzinfo=dt.timezone.utc)
+明细CSV: D:\ai\nofx-dev\decision_logs\binance_e10b9e46-2a6e-4124-9fa1-101973f1284f_deepseek_1762782649\reports\orders_decisions_validation.csv
+摘要MD: D:\ai\nofx-dev\decision_logs\binance_e10b9e46-2a6e-4124-9fa1-101973f1284f_deepseek_1762782649\reports\orders_decisions_summary.md
+PS D:\ai\nofx-dev\tools\log_reconcile> python .\add_timezh.py --input .\orders_export.json --output .\orders_export.with_timezh.json --offset-hours 8
+已更新对象数量: 3663
+已写入: D:\ai\nofx-dev\tools\log_reconcile\orders_export.with_timezh.json
+PS D:\ai\nofx-dev\tools\log_reconcile>
+
 ```
 
 提示：

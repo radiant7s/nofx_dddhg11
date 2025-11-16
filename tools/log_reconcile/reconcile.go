@@ -1129,9 +1129,9 @@ func (c *binanceREST) allOrders(symbol string, orderID, startTime, endTime int64
 	qs := strings.Join(params, "&")
 	// 签名
 	sig := hmacSHA256Hex(qs, c.secretKey)
-	path := "/dapi/v1/allOrders"
+	path := "/dapi/v1/allOrders?limit=100"
 	if strings.Contains(c.baseURL, "fapi") {
-		path = "/fapi/v1/allOrders"
+		path = "/fapi/v1/allOrders?limit=100"
 	}
 	url := fmt.Sprintf("%s%s?%s&signature=%s", c.baseURL, path, qs, sig)
 
