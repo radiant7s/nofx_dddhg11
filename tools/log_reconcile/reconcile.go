@@ -120,14 +120,18 @@ func main() {
 	var secretKey string
 	var intervalSec int
 	var base string
+	var configDBPath string
+	var userID string
 
-	flag.StringVar(&action, "action", "scan-symbols", "scan-symbols|fetch-orders|reconcile")
+	flag.StringVar(&action, "action", "scan-symbols", "scan-symbols|fetch-orders|fetch-orders-db|reconcile|partial-close-reconcile")
 	flag.StringVar(&decisionDir, "decision_dir", "decision_logs", "决策日志根目录")
 	flag.StringVar(&dbPath, "db", filepath.Join("tools", "log_reconcile", "reconcile.db"), "数据库文件路径")
 	flag.StringVar(&apiKey, "api_key", "", "币安 API Key")
 	flag.StringVar(&secretKey, "secret_key", "", "币安 Secret Key")
 	flag.IntVar(&intervalSec, "interval_sec", 3, "拉取间隔秒")
 	flag.StringVar(&base, "base", "fapi", "fapi 或 dapi")
+	flag.StringVar(&configDBPath, "config_db", "config.db", "配置数据库文件路径(读取交易员与密钥)")
+	flag.StringVar(&userID, "user_id", "default", "配置库中的用户ID")
 	flag.Parse()
 
 	if err := os.MkdirAll(filepath.Dir(dbPath), 0755); err != nil {
@@ -160,6 +164,10 @@ func main() {
 		}
 		if err := fetchOrdersLoop(db, apiKey, secretKey, time.Duration(intervalSec)*time.Second, base); err != nil {
 			log.Fatalf("拉取订单失败: %v", err)
+		}
+	case "fetch-orders-db":
+		if err := fetchOrdersFromConfigDB(db, configDBPath, userID, time.Duration(intervalSec)*time.Second, base); err != nil {
+			log.Fatalf("从配置库拉取订单失败: %v", err)
 		}
 	case "reconcile":
 		if err := reconcileLogs(db, decisionDir); err != nil {
@@ -252,6 +260,55 @@ func fetchOrdersLoop(db *sql.DB, apiKey, secretKey string, interval time.Duratio
 		}
 		log.Printf("等待 %v 后继续...", interval)
 		time.Sleep(interval)
+	}
+	return nil
+}
+
+// fetchOrdersFromConfigDB 读取 config.db 中的交易员与密钥，按交易员隔离拉取其 symbols 的订单
+func fetchOrdersFromConfigDB(reconcileDB *sql.DB, configDBPath, userID string, interval time.Duration, base string) error {
+	cfgDB, err := sql.Open("sqlite", configDBPath)
+	if err != nil {
+		return fmt.Errorf("打开配置数据库失败: %w", err)
+	}
+	defer cfgDB.Close()
+
+	// 读取所有使用 binance 的交易员及其密钥（忽略空密钥）
+	rows, err := cfgDB.Query(`
+ 		SELECT t.id AS trader_id, e.api_key, e.secret_key
+ 		FROM traders t
+ 		JOIN exchanges e ON t.exchange_id = e.id AND t.user_id = e.user_id
+ 		WHERE t.user_id = ? AND t.exchange_id = 'binance' AND COALESCE(e.api_key,'') <> '' AND COALESCE(e.secret_key,'') <> ''
+ 		ORDER BY t.id
+ 	`, userID)
+	if err != nil {
+		return fmt.Errorf("查询交易员密钥失败: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var traderID, apiKey, secretKey string
+		if err := rows.Scan(&traderID, &apiKey, &secretKey); err != nil {
+			continue
+		}
+		// 查询该交易员的所有已扫描 symbol
+		symRows, err := reconcileDB.Query(`SELECT symbol FROM symbols WHERE trader_id = ? ORDER BY symbol`, traderID)
+		if err != nil {
+			log.Printf("⚠ 读取交易员 %s 的符号失败: %v", traderID, err)
+			continue
+		}
+		client := newSignedClient(apiKey, secretKey, base)
+		for symRows.Next() {
+			var symbol string
+			if err := symRows.Scan(&symbol); err != nil {
+				continue
+			}
+			if err := fetchOrdersForSymbol(reconcileDB, client, traderID, symbol); err != nil {
+				log.Printf("⚠ 拉取 [%s] %s 失败: %v", traderID, symbol, err)
+			}
+			log.Printf("等待 %v 后继续...", interval)
+			time.Sleep(interval)
+		}
+		_ = symRows.Close()
 	}
 	return nil
 }

@@ -8,8 +8,12 @@
 # 1. 扫描交易对
 go run ./tools/log_reconcile -action scan-symbols
 
-# 2. 拉取订单 (需要币安 API 密钥)
+# 2A. 拉取订单（单一密钥，旧方式）
 go run ./tools/log_reconcile -action fetch-orders -api_key YOUR_KEY -secret_key YOUR_SECRET
+
+# 2B. 从 config.db 自动读取交易员与密钥（推荐）
+#    每位交易员将使用各自的币安密钥，避免混用导致重复或错配
+go run ./tools/log_reconcile -action fetch-orders-db -config_db config.db -user_id default -base fapi
 
 
 # 3. 执行对账
@@ -18,10 +22,18 @@ go run ./tools/log_reconcile -action reconcile
 
 ## 主要参数
 
-- -action: scan-symbols / fetch-orders / reconcile
-- -api_key: 币安 API Key (仅步骤 2 需要)
-- -secret_key: 币安 Secret Key (仅步骤 2 需要)
-- -decision_dir: 日志目录 (默认 decision_logs)
+- `-action`: `scan-symbols` / `fetch-orders` / `fetch-orders-db` / `reconcile` / `partial-close-reconcile`
+- `-decision_dir`: 日志目录 (默认 `decision_logs`)
+- `-db`: 对账缓存库 (默认 `tools/log_reconcile/reconcile.db`)
+- `-base`: 币安合约类型，`fapi`(U本位) 或 `dapi`(币本位)，默认 `fapi`
+
+单一密钥模式（旧方式，仅用于 `-action fetch-orders`）
+- `-api_key`: 币安 API Key
+- `-secret_key`: 币安 Secret Key
+
+从配置库读取（推荐，`-action fetch-orders-db`）
+- `-config_db`: 配置数据库路径 (默认 `config.db`)
+- `-user_id`: 配置库中的用户ID (默认 `default`)
 
 ## 功能
 
@@ -41,3 +53,4 @@ go run ./tools/log_reconcile -action reconcile
 
 ---
 v1.0 | 2025-11-12
+v1.1 | 2025-11-16 新增 `fetch-orders-db`，支持从 config.db 按交易员读取密钥
